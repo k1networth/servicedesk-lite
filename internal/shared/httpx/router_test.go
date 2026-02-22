@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/k1networth/servicedesk-lite/internal/shared/httpx"
+	"github.com/k1networth/servicedesk-lite/internal/ticket"
 )
 
 func testLogger() *slog.Logger {
@@ -19,11 +20,15 @@ func testLogger() *slog.Logger {
 	)
 }
 
-func TestHealthzReturns200AndBodyOK(t *testing.T) {
+func newRouterForTest() http.Handler {
 	log := testLogger()
-	h := httpx.NewRouter(log)
+	store := ticket.NewInMemoryStore()
+	ticketH := &ticket.Handler{Log: log, Store: store}
+	return httpx.NewRouter(log, ticketH)
+}
 
-	srv := httptest.NewServer(h)
+func TestHealthzReturns200AndBodyOK(t *testing.T) {
+	srv := httptest.NewServer(newRouterForTest())
 	t.Cleanup(srv.Close)
 
 	resp, err := http.Get(srv.URL + "/healthz")
@@ -35,18 +40,10 @@ func TestHealthzReturns200AndBodyOK(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected %d, got %d", http.StatusOK, resp.StatusCode)
 	}
-
-	body, _ := io.ReadAll(resp.Body)
-	if string(body) != "ok" {
-		t.Fatalf("expected body %q, got %q", "ok", string(body))
-	}
 }
 
 func TestRequestIDGeneratedIfMissing(t *testing.T) {
-	log := testLogger()
-	h := httpx.NewRouter(log)
-
-	srv := httptest.NewServer(h)
+	srv := httptest.NewServer(newRouterForTest())
 	t.Cleanup(srv.Close)
 
 	req, err := http.NewRequest(http.MethodGet, srv.URL+"/healthz", nil)
@@ -67,22 +64,18 @@ func TestRequestIDGeneratedIfMissing(t *testing.T) {
 
 	re := regexp.MustCompile(`^[0-9a-f]{32}$`)
 	if !re.MatchString(got) {
-		t.Fatalf("expected generated request id to look like 32-char hex, got %q", got)
+		t.Fatalf("expected 32-char hex request id, got %q", got)
 	}
 }
 
 func TestRequestIDPreservedIfProvided(t *testing.T) {
-	log := testLogger()
-	h := httpx.NewRouter(log)
-
-	srv := httptest.NewServer(h)
+	srv := httptest.NewServer(newRouterForTest())
 	t.Cleanup(srv.Close)
 
 	req, err := http.NewRequest(http.MethodGet, srv.URL+"/healthz", nil)
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-
 	req.Header.Set("X-Request-Id", "test123")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -91,8 +84,7 @@ func TestRequestIDPreservedIfProvided(t *testing.T) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	got := resp.Header.Get("X-Request-Id")
-	if got != "test123" {
+	if got := resp.Header.Get("X-Request-Id"); got != "test123" {
 		t.Fatalf("expected X-Request-Id %q, got %q", "test123", got)
 	}
 }

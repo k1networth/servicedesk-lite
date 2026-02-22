@@ -8,16 +8,22 @@ import (
 	"github.com/k1networth/servicedesk-lite/internal/shared/config"
 	"github.com/k1networth/servicedesk-lite/internal/shared/httpx"
 	"github.com/k1networth/servicedesk-lite/internal/shared/logger"
+	"github.com/k1networth/servicedesk-lite/internal/ticket"
 )
 
 const appName = "ticket-service"
 
 func main() {
 	cfg := config.Load()
-
 	log := logger.New(appName, cfg.AppEnv)
 
-	handler := httpx.NewRouter(log)
+	store := ticket.NewInMemoryStore()
+	ticketH := &ticket.Handler{
+		Log:   log,
+		Store: store,
+	}
+
+	handler := httpx.NewRouter(log, ticketH)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
