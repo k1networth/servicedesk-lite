@@ -1,30 +1,84 @@
-# git i — TODO-only scaffold (high-RPS + HA oriented)
+# servicedesk-lite
 
-Здесь **нет реализации**: ни Go-кода, ни рабочих Dockerfile/compose/Makefile. Везде **только очень подробные TODO**,
-но TODO написаны так, чтобы проект можно было довести до:
-- **высокого RPS** (статлес сервисы, правильные индексы, кэш, очереди)
-- **HA** (репликации/кластера: Postgres, Kafka, Redis, k8s best practices)
-- **autoscaling** (HPA + метрики + лаг Kafka + PDB/affinity)
+ServiceDesk-lite — учебный (pet) проект для ВКР: **простая доменная область (тикеты)**, но реализация и инфраструктура — как в продакшене: **микросервисы**, **Kubernetes**, **DevOps**, **observability**, подготовка к **high RPS** и **HA** (Kafka/Postgres/Redis кластера, autoscaling).
 
-Цель: простой по домену ServiceDesk (тикеты), но “дотошный” по инженерии.
+## Goals
+- Построить “production-ready” каркас микросервисов на Go
+- Обкатать полный цикл: форматирование/линт/тесты → контейнеризация → CI/CD → деплой в Kubernetes
+- Добавить наблюдаемость: метрики/логи/трейсы (Prometheus/Grafana + ELK/Loki)
+- Подготовить архитектуру к масштабированию: stateless сервисы, HPA, очереди, кэш, outbox, идемпотентность
+- Описать и обосновать экономический эффект/выгоды (время деплоя, надежность, автоматизация)
 
-## Концепт (остается простым)
-- Ticket CRUD (create/get/list/close)
-- Attachments (S3/MinIO)
-- Events через Kafka + Transactional Outbox
-- Notifications consumer (идемпотентно) + DLQ
+## High-level architecture (planned)
+Сервисы (простые по функционалу, “взрослые” по инженерии):
+- **ticket-service** — HTTP API для тикетов (Postgres + Redis)
+- **outbox-relay** — Transactional Outbox → публикация событий в Kafka (scale-out)
+- **notification-service** — Kafka consumer → уведомления (идемпотентно, DLQ)
 
-## Ключевые документы
-- `docs/00-bootstrap.md` — как стартовать репо с нуля
-- `docs/05-nfr.md` — нефункциональные требования (SLO, RPS, HA, scaling)
-- `docs/10-contracts.md` — API/Kafka/DB/Redis/metrics спецификация
-- `docs/30-local-dev.md` — локальная среда (compose) — **только план**
-- `docs/40-docker.md` — Dockerfile’ы — **только план**
-- `docs/50-testing.md` — тестирование (unit/integration/contract/load/chaos) — **только план**
-- `docs/60-observability.md` — метрики/логи/трейсы/алерты — **только план**
-- `docs/70-k8s.md` — k8s: HPA, PDB, anti-affinity, stateful workloads — **только план**
-- `docs/80-iac.md`urban-spoon — Terraform/Ansible: структура модулей и HA окружений — **только план**
-- `docs/90-capacity.md` — capacity planning и тюнинг (pg, kafka, redis)
+Зависимости (эволюционно):
+- **Postgres** (с миграциями; далее HA/оператор или managed)
+- **Kafka** (с топиками/партициями; далее 3 брокера + replication)
+- **Redis** (cache + idempotency; далее Sentinel/Cluster)
+- **S3/MinIO** (attachments)
+- **Observability**: Prometheus/Grafana + logs (ELK или Loki) + tracing (OTel)
 
-## Файлы-заглушки
-- `Makefile`, `infra/local/docker-compose.yml`, `build/docker/*.Dockerfile`, `.golangci.yml` — **только TODO** (комментарии)
+## Repo structure
+- `cmd/` — точки входа сервисов
+- `internal/` — бизнес-логика и адаптеры
+- `api/` — OpenAPI/контракты (позже)
+- `infra/` — docker-compose/k8s/terraform/ansible (по итерациям)
+- `build/` — Dockerfile и сборка (позже)
+- `docs/` — заметки/дизайн/итерации (позже можно расширять)
+
+## Dev setup (Linux)
+
+### Requirements
+- Go 1.22+
+- git
+- make
+
+### Quick start
+Установить dev tools (версии прибиты в Makefile, ставятся в `./bin`):
+```bash
+make tools
+````
+
+Форматирование / линт / тесты:
+
+```bash
+make fmt
+make lint
+make test
+```
+
+Или всё сразу:
+
+```bash
+make check
+```
+
+Очистить локальные тулзы:
+
+```bash
+make clean
+```
+
+## Iterations / Roadmap
+
+Подход: итерации с “production requirements” (наблюдаемость, graceful shutdown, конфиг, тестируемость).
+
+Примерный план:
+
+1. **Bootstrap**: go.mod + Makefile (fmt/lint/test/tools) + базовые стандарты
+2. **ticket-service skeleton**: health/ready/metrics, request-id, structured logs, graceful shutdown
+3. **Postgres**: миграции + CRUD тикетов, индексы под list
+4. **Kafka base**: топики, producer/consumer, семантика at-least-once
+5. **Transactional Outbox**: relay scale-out (SKIP LOCKED), метрики lag
+6. **Redis**: cache + idempotency-key, политика TTL/invalidation
+7. **Observability**: Prometheus/Grafana + логи (ELK/Loki) + (опц.) tracing
+8. **Kubernetes**: Helm, HPA/PDB/anti-affinity, rollout без даунтайма
+9. **HA dependencies**: Kafka 3 brokers, Redis HA, Postgres HA/оператор (или managed) + демо отказоустойчивости
+
+## License
+
+MIT — см. `LICENSE`.
