@@ -5,6 +5,10 @@
 ---
 
 ## A) HTTP API (ticket-service)
+Источник истины (OpenAPI): `api/openapi/ticket-service.yaml`  
+Формат ошибок: `{ error: { code, message, request_id } }`
+
+
 
 ### A0. Общие требования (прод-ориентиры)
 TODO:

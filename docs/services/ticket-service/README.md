@@ -4,6 +4,9 @@ HTTP API для управления тикетами.
 
 ## Status
 
+
+OpenAPI: `api/openapi/ticket-service.yaml`
+
 Сейчас:
 - `GET /healthz`, `GET /readyz`
 - `POST /tickets` (in-memory)

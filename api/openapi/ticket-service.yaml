@@ -1,0 +1,286 @@
+openapi: 3.0.3
+info:
+  title: ticket-service API
+  version: 0.1.0
+  description: |
+    HTTP API для управления тикетами. Контракт фиксируется этой OpenAPI-спецификацией.
+  contact:
+    name: servicedesk-lite maintainers
+    email: devnull@example.com
+
+servers:
+  - url: http://localhost:8080
+    description: Local
+
+tags:
+  - name: health
+  - name: tickets
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Liveness probe
+      description: Returns service liveness status (used by Kubernetes livenessProbe).
+      operationId: getHealthz
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /readyz:
+    get:
+      tags: [health]
+      summary: Readiness probe
+      description: Returns service readiness status (used by Kubernetes readinessProbe).
+      operationId: getReadyz
+      responses:
+        "200":
+          description: Ready
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /tickets:
+    post:
+      tags: [tickets]
+      summary: Create ticket
+      description: Creates a new ticket and returns the created resource.
+      operationId: createTicket
+      parameters:
+        - $ref: "#/components/parameters/RequestIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTicketRequest"
+            examples:
+              example1:
+                value:
+                  title: "VPN не работает"
+                  description: "После обновления клиента пропало подключение"
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Location:
+              description: Resource location
+              schema:
+                type: string
+                example: /tickets/01HZX3G9ZP0K6P3Z4C0J0XK7Q9
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticket"
+        "400":
+          $ref: "#/components/responses/ValidationErrorResponse"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /tickets/{id}:
+    get:
+      tags: [tickets]
+      summary: Get ticket by id
+      description: Returns a ticket by its identifier.
+      operationId: getTicketById
+      parameters:
+        - $ref: "#/components/parameters/TicketIdPath"
+        - $ref: "#/components/parameters/RequestIdHeader"
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticket"
+        "404":
+          $ref: "#/components/responses/NotFoundErrorResponse"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+components:
+  parameters:
+    TicketIdPath:
+      name: id
+      in: path
+      required: true
+      description: Ticket id (UUID/ULID/строка — конкретный формат уточним позже, пока строка)
+      schema:
+        type: string
+        minLength: 1
+        example: 01HZX3G9ZP0K6P3Z4C0J0XK7Q9
+
+    RequestIdHeader:
+      name: X-Request-Id
+      in: header
+      required: false
+      description: Optional request id from client; service echoes it back (or generates).
+      schema:
+        type: string
+        minLength: 1
+        example: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
+
+  headers:
+    XRequestId:
+      description: Request id for tracing
+      schema:
+        type: string
+        example: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
+
+  responses:
+    ErrorResponse:
+      description: Error (generic)
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/XRequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          examples:
+            internal:
+              value:
+                error:
+                  code: INTERNAL
+                  message: internal error
+                  request_id: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
+
+    ValidationErrorResponse:
+      description: Validation error
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/XRequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          examples:
+            titleRequired:
+              value:
+                error:
+                  code: VALIDATION_ERROR
+                  message: title is required
+                  request_id: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
+
+    NotFoundErrorResponse:
+      description: Not found
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/XRequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          examples:
+            notFound:
+              value:
+                error:
+                  code: NOT_FOUND
+                  message: ticket not found
+                  request_id: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
+
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          example: ok
+      required: [status]
+
+    ReadyResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          example: ready
+      required: [status]
+
+    CreateTicketRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 5000
+      required: [title]
+
+    Ticket:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          example: 01HZX3G9ZP0K6P3Z4C0J0XK7Q9
+        title:
+          type: string
+          example: VPN не работает
+        description:
+          type: string
+          example: После обновления клиента пропало подключение
+        status:
+          type: string
+          description: Ticket status
+          enum: [new, in_progress, resolved, closed]
+          example: new
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-02-22T12:34:56Z"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2026-02-22T12:34:56Z"
+      required: [id, title, status, created_at, updated_at]
+
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorObject"
+      required: [error]
+
+    ErrorObject:
+      type: object
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code
+          example: VALIDATION_ERROR
+        message:
+          type: string
+          description: Human-readable error message
+          example: title is required
+        request_id:
+          type: string
+          description: Request id for tracing
+          example: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
+      required: [code, message, request_id]
