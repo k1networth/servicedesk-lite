@@ -1,16 +1,15 @@
 package httpx
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
 	"strings"
+
+	"github.com/k1networth/servicedesk-lite/internal/shared/requestid"
 )
 
 const requestIDHeader = "X-Request-Id"
-
-type ctxKeyRequestID struct{}
 
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -21,17 +20,9 @@ func RequestID(next http.Handler) http.Handler {
 
 		w.Header().Set(requestIDHeader, rid)
 
-		ctx := context.WithValue(r.Context(), ctxKeyRequestID{}, rid)
+		ctx := requestid.With(r.Context(), rid)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
-}
-
-func GetRequestID(ctx context.Context) string {
-	v := ctx.Value(ctxKeyRequestID{})
-	if s, ok := v.(string); ok {
-		return s
-	}
-	return ""
 }
 
 func newRequestID() string {

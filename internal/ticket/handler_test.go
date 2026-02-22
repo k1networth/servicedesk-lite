@@ -171,3 +171,46 @@ func TestGetTicket200AfterCreate(t *testing.T) {
 		t.Fatalf("expected title %q, got %q", "Network down", got.Title)
 	}
 }
+
+func TestValidationErrorContainsRequestID(t *testing.T) {
+	srv := newTestServer()
+	t.Cleanup(srv.Close)
+
+	body := []byte(`{"title":""}`)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/tickets", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Request-Id", "test123")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected %d, got %d, body=%s", http.StatusBadRequest, resp.StatusCode, string(b))
+	}
+
+	var er struct {
+		Error struct {
+			Code      string `json:"code"`
+			Message   string `json:"message"`
+			RequestID string `json:"request_id"`
+		} `json:"error"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&er); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+
+	if er.Error.Code != "validation_error" {
+		t.Fatalf("expected code %q, got %q", "validation_error", er.Error.Code)
+	}
+	if er.Error.RequestID != "test123" {
+		t.Fatalf("expected request_id %q, got %q", "test123", er.Error.RequestID)
+	}
+}

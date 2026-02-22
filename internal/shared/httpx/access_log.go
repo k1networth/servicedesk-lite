@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/k1networth/servicedesk-lite/internal/shared/requestid"
 )
 
 type statusRecorder struct {
@@ -26,7 +28,7 @@ func AccessLog(log *slog.Logger) func(http.Handler) http.Handler {
 			next.ServeHTTP(sw, r)
 
 			dur := time.Since(start)
-			rid := GetRequestID(r.Context())
+			rid := requestid.Get(r.Context())
 
 			log.Info("http_request",
 				slog.String("request_id", rid),
