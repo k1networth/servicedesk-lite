@@ -1,0 +1,20 @@
+# TODO: Напиши docker-compose.yml с нуля (локальная среда).
+#
+# Цель локалки: повторить “прод” поведение по зависимостям, но без излишней сложности.
+# Начни с **минимума**:
+# - Postgres (одиночный, но с настройками, близкими к прод)
+# - Redis (одиночный)
+# - Kafka (одиночный брокер)
+#
+# Потом сделай профили (profiles):
+# - core: postgres+redis+kafka
+# - storage: +minio
+# - observability: +prometheus+grafana + (elk OR loki)
+#
+# ВАЖНО: В проде ты сделаешь кластера (3 ноды Kafka, Redis cluster/sentinel, Postgres HA),
+# но локально это нужно только опционально (иначе будет больно).
+#
+# TODO: в конце, когда появятся сервисы, добавь:
+# - ticket-service (stateless)
+# - outbox-relay (stateless; можно масштабировать)
+# - notification-service (stateless; масштабируется как consumer group)

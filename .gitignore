@@ -1,0 +1,28 @@
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Local env / secrets
+.env
+.env.*
+*.env
+*.key
+*.pem
+
+# Build artifacts
+bin/
+dist/
+build/
+*.exe
+*.out
+
+# Go tools / tests
+*.test
+coverage.out
+*.prof
+*.pprof
+
+# Temporary
+tmp/
+cache/
