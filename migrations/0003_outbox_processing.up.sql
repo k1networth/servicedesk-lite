@@ -1,0 +1,9 @@
+ALTER TABLE outbox
+  ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMPTZ NULL,
+  ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ADD COLUMN IF NOT EXISTS last_error TEXT NULL,
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+CREATE INDEX IF NOT EXISTS outbox_pending_ready_idx
+  ON outbox (status, next_retry_at, created_at);

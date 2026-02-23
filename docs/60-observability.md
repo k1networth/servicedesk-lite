@@ -1,26 +1,20 @@
-# Observability — TODO (golden signals + autoscaling signals)
+# Observability
 
 ## Метрики
-TODO:
-- [ ] HTTP: RPS, latency, errors
-- [ ] Outbox lag
-- [ ] Kafka consumer lag
-- [ ] DB pool stats (опционально)
-- [ ] Redis hit/miss (опционально)
+- ticket-service: `http://localhost:8080/metrics`
+- outbox-relay: `http://localhost:9090/metrics`
+- notification-service: `http://localhost:9091/metrics`
 
-## Логи
-TODO:
-- [ ] JSON logs with request_id/trace_id
-- [ ] error logs with stack/context
+## Рекомендуемые метрики
+- ticket-service:
+  - requests total (route/status)
+  - latency histogram (если добавишь)
+- outbox-relay:
+  - published total / failed total
+  - outbox lag seconds (now - oldest pending)
+- notification-service:
+  - `notify_processed_total{event_type,status}`
 
-## Трейсинг
-TODO:
-- [ ] OTel, propagate trace context
-- [ ] correlate logs <-> traces
-
-## Алёрты (минимум)
-TODO:
-- [ ] 5xx rate
-- [ ] P95 latency above threshold
-- [ ] outbox lag > X seconds
-- [ ] consumer lag > Y messages
+## Корреляция
+- Используй заголовок `X-Request-Id` для HTTP.
+- `request_id` может прокидываться в Kafka envelope для трассировки.

@@ -37,13 +37,12 @@ RETURNING id, title, description, status, created_at, updated_at;
 		return Ticket{}, err
 	}
 
-	rid := requestid.Get(ctx)
 	payloadObj := map[string]any{
 		"ticket_id":  out.ID,
 		"title":      out.Title,
 		"status":     out.Status,
 		"created_at": out.CreatedAt,
-		"request_id": rid,
+		"request_id": requestid.Get(ctx),
 	}
 	payload, err := json.Marshal(payloadObj)
 	if err != nil {

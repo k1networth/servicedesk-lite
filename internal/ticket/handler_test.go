@@ -61,8 +61,8 @@ func TestCreateTicket201(t *testing.T) {
 	if got.ID == "" {
 		t.Fatalf("expected id to be set")
 	}
-	if got.Status != "new" {
-		t.Fatalf("expected status %q, got %q", "new", got.Status)
+	if got.Status != "open" {
+		t.Fatalf("expected status %q, got %q", "open", got.Status)
 	}
 	if got.Title != "Printer is broken" {
 		t.Fatalf("expected title %q, got %q", "Printer is broken", got.Title)
@@ -115,6 +115,29 @@ func TestCreateTicketValidation400(t *testing.T) {
 	}
 	if er.Error.Message == "" {
 		t.Fatalf("expected message to be set")
+	}
+}
+
+func TestCreateTicketRejectsTrailingJSON(t *testing.T) {
+	srv := newTestServer()
+	t.Cleanup(srv.Close)
+
+	body := []byte(`{"title":"ok","description":"ok"}{"evil":1}`)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/tickets", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected %d, got %d, body=%s", http.StatusBadRequest, resp.StatusCode, string(b))
 	}
 }
 

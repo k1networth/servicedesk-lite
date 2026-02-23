@@ -3,6 +3,8 @@
 Документация по конкретным сервисам.
 
 - `ticket-service/README.md` — HTTP API тикетов (health/ready, создание, получение)
+- `outbox-relay/README.md` — доставка событий из outbox в Kafka
+- `notification-service/README.md` — Kafka consumer + идемпотентность
 
 ## Конвенции
 

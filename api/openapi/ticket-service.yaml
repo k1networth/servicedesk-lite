@@ -161,7 +161,7 @@ components:
             internal:
               value:
                 error:
-                  code: internal_error
+                  code: INTERNAL
                   message: internal error
                   request_id: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
 
@@ -178,7 +178,7 @@ components:
             titleRequired:
               value:
                 error:
-                  code: validation_error
+                  code: VALIDATION_ERROR
                   message: title is required
                   request_id: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
 
@@ -195,8 +195,8 @@ components:
             notFound:
               value:
                 error:
-                  code: not_found
-                  message: not found
+                  code: NOT_FOUND
+                  message: ticket not found
                   request_id: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
 
   schemas:
@@ -274,7 +274,7 @@ components:
         code:
           type: string
           description: Machine-readable error code
-          example: validation_error
+          example: VALIDATION_ERROR
         message:
           type: string
           description: Human-readable error message
@@ -283,4 +283,4 @@ components:
           type: string
           description: Request id for tracing
           example: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
-      required: [code, message]
+      required: [code, message, request_id]

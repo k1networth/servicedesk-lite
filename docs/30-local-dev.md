@@ -1,53 +1,83 @@
-# Local dev (docker compose)
+# Локальная разработка
 
-Локальная среда должна помогать разработке, но не превращаться в мини-прод. Поэтому зависимости добавляем **эволюционно**.
+## 1) Окружение
 
-## База (уже есть)
+Скопируй `.env.example` → `.env`.
 
-### Postgres (single)
+**Важно:** в `DATABASE_URL` укажи `127.0.0.1` (а не `localhost`), чтобы избежать резолва `localhost -> ::1`:
 
-Файл: `infra/local/compose.yaml`
+```
+DATABASE_URL=postgres://servicedesk:servicedesk@127.0.0.1:5432/servicedesk?sslmode=disable
+KAFKA_BROKERS=localhost:29092
+KAFKA_TOPIC=tickets.events
+```
 
-Команды:
+## 2) Поднять инфраструктуру (Postgres + Kafka)
 
-```bash
-cp .env.example .env
-make db-up
-make db-ps
+```
+docker compose --env-file .env -f infra/local/compose.yaml up -d
+```
+
+Проверка:
+- Postgres: `localhost:5432`
+- Kafka host listener: `localhost:29092`
+
+## 3) Миграции
+
+```
 make migrate-up
 ```
 
-Остановить и удалить volume:
+## 4) Запуск сервисов
 
-```bash
-make db-down
+### Вариант A: E2E-скрипт (рекомендуется)
+
+```
+./scripts/e2e_local.sh
 ```
 
-> Важно: `migrate-up` требует переменную `DATABASE_URL` (см. `.env.example`).
+### Вариант B: вручную (3 терминала)
 
-## Базовая локалка (дальше по итерациям)
-План:
-- [ ] Redis single
-- [ ] Kafka single
+Терминал 1:
+```
+make run-ticket
+```
 
-## Расширенная локалка (опциональная)
-TODO:
-- [ ] Kafka 3 brokers (для проверки replication) — только если нужно
-- [ ] Redis Sentinel/Cluster — только если нужно
-- [ ] Postgres HA (Patroni) — обычно не надо локально
+Терминал 2:
+```
+make run-relay
+```
 
-## Observability profile
-TODO:
-- [ ] Prometheus + Grafana
-- [ ] Loki или ELK (выбери один; Loki проще)
+Терминал 3:
+```
+make run-notify
+```
 
-## Storage profile
-TODO:
-- [ ] MinIO
+## 5) Проверки
 
-## Проверки
-TODO:
-- [ ] команды smoke-check:
-  - postgres ready
-  - redis ready
-  - kafka produce/consume
+Создать тикет:
+```
+curl -s -X POST http://localhost:8080/tickets   -H 'Content-Type: application/json'   -H "X-Request-Id: rid-$(date +%s)"   -d '{"title":"Diag ticket","description":"check notify"}'
+```
+
+Проверить таблицы:
+```
+./scripts/diag.sh outbox
+./scripts/diag.sh processed
+```
+
+Посмотреть Kafka:
+```
+./scripts/diag.sh peek tickets.events
+```
+
+## Troubleshooting
+
+- Ошибка миграций вида `[::1]:5432`:
+  - замени `localhost` на `127.0.0.1` в `DATABASE_URL`
+- Не видишь сообщений в Kafka:
+  - внутри контейнера используй `kafka:9092`
+  - с хоста используй `localhost:29092`
+- Consumer не обрабатывает события:
+  - убедись, что `notification-service` запущен
+  - проверь лаг: `./scripts/diag.sh group notification-service`

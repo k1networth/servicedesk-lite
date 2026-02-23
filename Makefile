@@ -17,7 +17,11 @@ ENV_FILE := $(CURDIR)/.env
 -include $(ENV_FILE)
 export
 
-GOFILES := $(shell git ls-files '*.go' 2>/dev/null)
+# Find Go files (skip vendor/bin/.git). Avoids failures on deleted-but-not-staged tracked files.
+GOFILES := $(shell find . -type f -name '*.go' \
+	-not -path './vendor/*' \
+	-not -path './bin/*' \
+	-not -path './.git/*' 2>/dev/null)
 
 WORKDIR_MOUNT := -v $(CURDIR):/work -w /work
 DOCKER_RUN := docker run --rm $(WORKDIR_MOUNT)
@@ -28,13 +32,18 @@ MIGRATE := $(DOCKER_RUN) --network $(MIGRATE_NET) $(MIGRATE_IMAGE)
 
 GO_TEST_FLAGS ?= -count=1
 
+# diag helpers
+TOPIC ?= tickets.events
+GROUP ?= notification-service
+
 .PHONY: help versions tools fmt lint test check tidy download clean
 .PHONY: openapi-lint openapi-lint-ticket
-.PHONY: db-up db-down db-ps migrate-up migrate-down guard-%
-.PHONY: run-ticket run-relay
+.PHONY: db-up db-down db-ps db-logs db-reset migrate-up migrate-down guard-%
+.PHONY: run-ticket run-relay run-notify e2e
+.PHONY: diag diag-topics diag-peek diag-outbox diag-processed diag-groups diag-group
 
 help: ## Show available commands
-	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_.-]+:.*##/ {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_.-]+:.*##/ {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 versions: ## Print pinned tool versions
 	@echo "golangci-lint: $(GOLANGCI_LINT_VERSION)"
@@ -88,6 +97,11 @@ db-down: ## Stop local dependencies (and remove volumes)
 db-ps: ## Show local dependencies status
 	@docker compose --env-file $(ENV_FILE) -f $(DB_COMPOSE) ps
 
+db-logs: ## Follow docker compose logs
+	@docker compose --env-file $(ENV_FILE) -f $(DB_COMPOSE) logs -f --tail=200
+
+db-reset: db-down db-up ## Recreate local dependencies from scratch (with fresh volumes)
+
 guard-%:
 	@if [[ -z "$($*)" ]]; then echo "ERROR: $* is empty"; exit 1; fi
 
@@ -97,8 +111,35 @@ migrate-up: guard-DATABASE_URL ## Run DB migrations up (docker)
 migrate-down: guard-DATABASE_URL ## Rollback last migration (docker)
 	@$(MIGRATE) -path migrations -database "$(DATABASE_URL)" down 1
 
-run-ticket: ## Run ticket-service locally
-	@go run ./cmd/ticket-service
+run-ticket: ## Run ticket-service (Ctrl+C is OK)
+	@go run ./cmd/ticket-service; code=$$?; test $$code -eq 0 -o $$code -eq 130
 
-run-relay: guard-DATABASE_URL ## Run outbox-relay locally
-	@go run ./cmd/outbox-relay
+run-relay: ## Run outbox-relay (Ctrl+C is OK)
+	@go run ./cmd/outbox-relay; code=$$?; test $$code -eq 0 -o $$code -eq 130
+
+run-notify: ## Run notification-service (Ctrl+C is OK)
+	@go run ./cmd/notification-service; code=$$?; test $$code -eq 0 -o $$code -eq 130
+
+e2e: ## Run local end-to-end check (scripts/e2e_local.sh)
+	@./scripts/e2e_local.sh
+
+diag: ## Show diag script help
+	@./scripts/diag.sh
+
+diag-topics: ## List Kafka topics
+	@./scripts/diag.sh topics
+
+diag-peek: ## Peek Kafka messages (TOPIC=tickets.events)
+	@./scripts/diag.sh peek $(TOPIC)
+
+diag-outbox: ## Show outbox rows
+	@./scripts/diag.sh outbox
+
+diag-processed: ## Show processed_events rows
+	@./scripts/diag.sh processed
+
+diag-groups: ## List consumer groups
+	@./scripts/diag.sh groups
+
+diag-group: ## Describe consumer group (GROUP=notification-service)
+	@./scripts/diag.sh group $(GROUP)

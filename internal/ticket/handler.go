@@ -48,13 +48,12 @@ func (h *Handler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now().UTC()
 	t := Ticket{
 		Title:       strings.TrimSpace(req.Title),
 		Description: strings.TrimSpace(req.Description),
-		Status:      "new",
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		Status:      "open",
+		CreatedAt:   time.Now().UTC(),
+		UpdatedAt:   time.Now().UTC(),
 	}
 
 	t.ID = uuid.NewString()
@@ -64,8 +63,6 @@ func (h *Handler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 		WriteErrorR(w, r, http.StatusInternalServerError, "internal_error", "internal error")
 		return
 	}
-
-	w.Header().Set("Location", "/tickets/"+created.ID)
 
 	writeJSON(w, http.StatusCreated, created)
 }

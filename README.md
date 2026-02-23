@@ -1,130 +1,114 @@
 # servicedesk-lite
 
-ServiceDesk-lite — учебный (pet) проект для ВКР: **простая доменная область (тикеты)**, но реализация и инфраструктура — как в продакшене: **микросервисы**, **Kubernetes**, **DevOps**, **observability**, подготовка к **high RPS** и **HA**.
+Минимальный backend «службы поддержки» для демонстрации связки **Transactional Outbox + Kafka + Idempotent Consumer**
+в контексте диплома про Kubernetes/DevOps: миграции, метрики, health/ready, скрипты проверки.
 
-## Быстрые ссылки
+## Сервисы
 
-- Документация: `docs/README.md`
-- Контракты/спеки: `docs/10-contracts.md`
-- Исходники сервиса: `cmd/ticket-service`, `internal/ticket`
+- **ticket-service** (`cmd/ticket-service`)
+  - REST API: создать/получить тикет
+  - Пишет в Postgres и добавляет событие в outbox **в одной транзакции**
+  - Метрики + health/ready
 
-## Goals
+- **outbox-relay** (`cmd/outbox-relay`)
+  - Опрашивает таблицу `outbox` (claim через `FOR UPDATE SKIP LOCKED`)
+  - Публикует события в Kafka
+  - Обновляет статусы outbox: `pending -> processing -> sent`
+  - Возвращает «зависшие» события из `processing` обратно в `pending` по таймауту
 
-- Построить “production-ready” каркас микросервисов на Go
-- Обкатать полный цикл: форматирование/линт/тесты → контейнеризация → CI/CD → деплой в Kubernetes
-- Добавить наблюдаемость: метрики/логи/трейсы (Prometheus/Grafana + ELK/Loki)
-- Подготовить архитектуру к масштабированию: stateless сервисы, HPA, очереди, кэш, outbox, идемпотентность
-- Описать и обосновать экономический эффект/выгоды (скорость доставки, надежность, автоматизация)
+- **notification-service** (`cmd/notification-service`)
+  - Kafka consumer (group по умолчанию: `notification-service`)
+  - Таблица `processed_events` для **идемпотентности**
+  - Дубликаты по `event_id` безопасно скипаются
 
-## High-level architecture (planned)
+## Архитектура (E2E)
 
-Сервисы (простые по функционалу, “взрослые” по инженерии):
+`POST /tickets`
+→ транзакция БД: insert в `tickets` + insert в `outbox`
+→ outbox-relay публикует событие в Kafka
+→ notification-service потребляет и фиксирует обработку в `processed_events` (идемпотентно)
 
-- **ticket-service** — HTTP API для тикетов (**in-memory или Postgres**, см. ниже)
-- **outbox-relay** — Transactional Outbox → публикация событий в Kafka (scale-out) *(в планах)*
-- **notification-service** — Kafka consumer → уведомления (идемпотентно, DLQ) *(в планах)*
+## Быстрый старт (рекомендуется)
 
-Зависимости (эволюционно):
+### Требования
+- Docker + docker compose
+- Go
+- `make`
+- `python3` (скрипты)
+- `jq` (опционально)
 
-- **Postgres** (миграции; далее HA/оператор или managed)
-- **Kafka** (топики/партиции; далее 3 брокера + replication)
-- **Redis** (cache + idempotency; далее Sentinel/Cluster)
-- **S3/MinIO** (attachments)
-- **Observability**: Prometheus/Grafana + logs (ELK или Loki) + tracing (OTel)
+### 1) Настройка env
+Скопируй `.env.example` → `.env` и проверь ключевые параметры:
 
-## Repo structure
+**Важно:** для Postgres используй `127.0.0.1`, а не `localhost` (иначе возможны проблемы с IPv6 `::1`).
 
-- `cmd/` — точки входа сервисов
-- `internal/` — бизнес-логика и адаптеры
-- `api/` — контракты (OpenAPI и др.)
-- `infra/` — docker-compose/k8s/terraform/ansible (по итерациям)
-- `build/` — Dockerfile и сборка (по итерациям)
-- `docs/` — требования/контракты/дизайн/итерации
+Пример:
+- `DATABASE_URL=postgres://servicedesk:servicedesk@127.0.0.1:5432/servicedesk?sslmode=disable`
+- `KAFKA_BROKERS=localhost:29092`
+- `KAFKA_TOPIC=tickets.events`
 
-## Dev setup (Linux)
-
-### Requirements
-
-- Go 1.22+
-- git
-- make
-
-### Quick start
-
-Установить dev tools (версии прибиты в Makefile, ставятся в `./bin`):
+### 2) E2E-проверка одной командой
+Скрипт:
+- поднимает Postgres + Kafka (docker compose)
+- применяет миграции
+- запускает 3 сервиса (ticket/relay/notify)
+- создаёт тикет
+- проверяет: outbox `sent`, Kafka содержит `event_id`, `processed_events` = `done`
 
 ```bash
-make tools
+./scripts/e2e_local.sh
 ```
 
-Форматирование / линт / тесты:
-
+### 3) Диагностика
 ```bash
-make fmt
-make lint
-make test
+./scripts/diag.sh topics
+./scripts/diag.sh peek tickets.events
+./scripts/diag.sh outbox
+./scripts/diag.sh processed
+./scripts/diag.sh group notification-service
 ```
 
-Или всё сразу:
+## Ручной запуск (3 терминала)
 
 ```bash
-make check
-```
-
-Очистить локальные тулзы:
-
-```bash
-make clean
-```
-
-### Запуск ticket-service локально
-
-```bash
-go run ./cmd/ticket-service
-```
-
-По умолчанию слушает `:8080` (см. `internal/shared/config` и `.env`).
-
-#### Режимы хранения
-
-- **In-memory**: если `DATABASE_URL` не задан.
-- **Postgres**: если задан `DATABASE_URL` (см. `.env.example`).
-
-Для Postgres (docker compose):
-
-```bash
-make db-up
+# infra
+docker compose --env-file .env -f infra/local/compose.yaml up -d
 make migrate-up
-DATABASE_URL=postgres://... go run ./cmd/ticket-service
+
+# терминал 1
+make run-ticket
+
+# терминал 2
+make run-relay
+
+# терминал 3
+make run-notify
 ```
 
-Полезные эндпоинты:
+Создать тикет:
+```bash
+curl -i -X POST http://localhost:8080/tickets   -H 'Content-Type: application/json'   -H 'X-Request-Id: demo-1'   -d '{"title":"Printer is broken","description":"Office 3rd floor"}'
+```
 
-- `GET /healthz`
-- `GET /readyz`
-- `POST /tickets`
-- `GET /tickets/{id}`
+## Порты
 
-> Контракт этих эндпоинтов фиксируется в документации и (на следующей итерации) в OpenAPI спецификации.
+- ticket-service: `:8080`
+  - `/healthz`, `/readyz`, `/metrics`
+- outbox-relay metrics: `:9090/metrics`
+- notification-service metrics: `:9091/metrics`
+- Postgres: `:5432`
+- Kafka host listener: `:29092`
 
-## Iterations / Roadmap
+## Make targets
 
-Подход: итерации с “production requirements” (наблюдаемость, graceful shutdown, конфиг, тестируемость).
+- `make check` — fmt + lint + test
+- `make db-up` / `make db-down` — локальная инфраструктура (compose)
+- `make migrate-up` — миграции
+- `make run-ticket` / `make run-relay` / `make run-notify` — запуск сервисов
 
-Статус (на сейчас):
+## Заметки
 
-1. **Bootstrap**: go.mod + Makefile (fmt/lint/test/tools) + базовые стандарты — ✅
-2. **ticket-service skeleton**: health/ready, request-id, access log, graceful shutdown, /metrics — ✅
-3. **OpenAPI контракт**: `api/openapi/ticket-service.yaml` + `make openapi-lint` — ✅
-4. **Postgres MVP**: миграции + Create/Get тикетов + transactional insert в outbox — ✅
-5. **ticket-service расширение**: list/close + индексы/оптимизации + интеграционные тесты — ⏳
-6. **Transactional Outbox relay**: scale-out (SKIP LOCKED), retries/backoff, метрики lag — ⏳
-7. **Kafka base**: топики, producer/consumer, семантика at-least-once — ⏳
-8. **Redis**: cache + idempotency-key, политика TTL/invalidation — ⏳
-9. **Observability**: Prometheus/Grafana + логи (ELK/Loki) + (опц.) tracing — ⏳
-10. **Kubernetes**: Helm, HPA/PDB/anti-affinity, rollout без даунтайма — ⏳
-11. **HA dependencies**: Kafka 3 brokers, Redis HA, Postgres HA/оператор (или managed) + демо отказоустойчивости — ⏳
-
-## License
-
-MIT — см. `LICENSE`.
+- Kafka настроена с двумя listener’ами:
+  - внутри docker-сети: `kafka:9092`
+  - с хоста (Go-сервисы): `localhost:29092`
+- Не используй не-ASCII символы в `KAFKA_TOPIC` (например, кириллическую `с`).

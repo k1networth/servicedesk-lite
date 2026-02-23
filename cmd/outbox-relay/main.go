@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,6 +13,9 @@ import (
 	"github.com/k1networth/servicedesk-lite/internal/outbox"
 	"github.com/k1networth/servicedesk-lite/internal/shared/config"
 	"github.com/k1networth/servicedesk-lite/internal/shared/db"
+	"github.com/k1networth/servicedesk-lite/internal/shared/env"
+	"github.com/k1networth/servicedesk-lite/internal/shared/events"
+	"github.com/k1networth/servicedesk-lite/internal/shared/kafkax"
 	"github.com/k1networth/servicedesk-lite/internal/shared/logger"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -23,164 +27,141 @@ func main() {
 	cfg := config.Load()
 	log := logger.New(appName, cfg.AppEnv)
 
-	if cfg.DatabaseURL == "" {
-		log.Error("DATABASE_URL is empty")
-		return
+	// Required
+	dbURL := env.String("DATABASE_URL", cfg.DatabaseURL)
+	if dbURL == "" {
+		log.Error("config_error", slog.String("err", "DATABASE_URL is empty"))
+		os.Exit(2)
 	}
+
+	brokers := env.StringsCSV("KAFKA_BROKERS", []string{"localhost:9092"})
+	topic := env.String("KAFKA_TOPIC", "tickets.events")
+	clientID := env.String("KAFKA_CLIENT_ID", appName)
+
+	batchSize := env.Int("OUTBOX_RELAY_BATCH_SIZE", 50)
+	pollInterval := env.Duration("OUTBOX_RELAY_POLL_INTERVAL", 500*time.Millisecond)
+	processingTimeout := env.Duration("OUTBOX_RELAY_PROCESSING_TIMEOUT", 30*time.Second)
+	metricsAddr := env.String("METRICS_ADDR", ":9090")
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	pg, err := db.OpenPostgres(ctx, db.PostgresConfig{DatabaseURL: cfg.DatabaseURL})
+	pg, err := db.OpenPostgres(ctx, db.PostgresConfig{DatabaseURL: dbURL})
 	if err != nil {
 		log.Error("db_open_failed", slog.String("err", err.Error()))
-		return
+		os.Exit(1)
 	}
-	defer func() {
-		if err := pg.Close(); err != nil {
-			log.Error("db_close_failed", slog.String("err", err.Error()))
-		}
-	}()
+	defer func() { _ = pg.Close() }()
 
-	repo := outbox.NewPostgresRepo(pg)
+	store := outbox.NewStore(pg)
+	producer := kafkax.NewProducer(kafkax.ProducerConfig{
+		Brokers:      brokers,
+		Topic:        topic,
+		ClientID:     clientID,
+		WriteTimeout: 5 * time.Second,
+	})
+	defer func() { _ = producer.Close() }()
 
-	// --- Metrics ---
 	reg := prometheus.NewRegistry()
-	m := newRelayMetrics(reg)
+	met := outbox.NewMetrics(reg)
 
-	metricsSrv := &http.Server{
-		Addr:              cfg.MetricsAddr,
-		Handler:           promhttp.HandlerFor(reg, promhttp.HandlerOpts{}),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
+	// metrics server
 	go func() {
-		log.Info("metrics_listen", slog.String("addr", metricsSrv.Addr))
-		if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Error("metrics_server_error", slog.String("err", err.Error()))
-		}
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+		log.Info("metrics_listen", slog.String("addr", metricsAddr))
+		_ = http.ListenAndServe(metricsAddr, mux)
 	}()
 
 	log.Info("relay_start",
-		slog.Int("batch_size", cfg.OutboxBatchSize),
-		slog.String("poll_interval", cfg.OutboxPollInterval.String()),
-		slog.String("processing_timeout", cfg.OutboxProcessingTimeout.String()),
+		slog.Int("batch_size", batchSize),
+		slog.String("poll_interval", pollInterval.String()),
+		slog.String("processing_timeout", processingTimeout.String()),
+		slog.String("topic", topic),
 	)
 
-	ticker := time.NewTicker(cfg.OutboxPollInterval)
-	defer ticker.Stop()
+	t := time.NewTicker(pollInterval)
+	defer t.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = metricsSrv.Shutdown(shutdownCtx)
 			log.Info("relay_shutdown")
 			return
-		case <-ticker.C:
-			m.pollsTotal.Inc()
-
-			if n, err := repo.RequeueStuck(ctx, cfg.OutboxProcessingTimeout); err != nil {
-				m.requeueErrorsTotal.Inc()
-				log.Error("outbox_requeue_failed", slog.String("err", err.Error()))
-			} else if n > 0 {
-				m.requeuedTotal.Add(float64(n))
-				log.Warn("outbox_requeued_stuck", slog.Int64("count", n))
-			}
-
-			recs, err := repo.ClaimPending(ctx, cfg.OutboxBatchSize)
-			if err != nil {
-				m.claimErrorsTotal.Inc()
-				log.Error("outbox_claim_failed", slog.String("err", err.Error()))
-				continue
-			}
-			if len(recs) == 0 {
-				m.lagSeconds.Set(0)
-				continue
-			}
-
-			m.claimedTotal.Add(float64(len(recs)))
-			m.lagSeconds.Set(time.Since(recs[0].CreatedAt).Seconds())
-
-			for _, rec := range recs {
-				log.Info("outbox_event",
-					slog.Int64("id", rec.ID),
-					slog.String("aggregate", rec.Aggregate),
-					slog.String("aggregate_id", rec.AggregateID),
-					slog.String("event_type", rec.EventType),
-					slog.Int("attempts", rec.Attempts),
-				)
-
-				if err := repo.MarkSent(ctx, rec.ID); err != nil {
-					m.markErrorsTotal.Inc()
-					log.Error("outbox_mark_sent_failed", slog.Int64("id", rec.ID), slog.String("err", err.Error()))
-					_ = repo.MarkPending(ctx, rec.ID)
-					continue
-				}
-				m.sentTotal.Inc()
+		case <-t.C:
+			if err := tick(ctx, log, store, producer, met, batchSize, processingTimeout); err != nil {
+				log.Error("relay_tick_failed", slog.String("err", err.Error()))
 			}
 		}
 	}
 }
 
-type relayMetrics struct {
-	pollsTotal         prometheus.Counter
-	claimedTotal       prometheus.Counter
-	sentTotal          prometheus.Counter
-	claimErrorsTotal   prometheus.Counter
-	markErrorsTotal    prometheus.Counter
-	requeuedTotal      prometheus.Counter
-	requeueErrorsTotal prometheus.Counter
-	lagSeconds         prometheus.Gauge
-}
-
-func newRelayMetrics(reg prometheus.Registerer) *relayMetrics {
-	m := &relayMetrics{
-		pollsTotal: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "outbox_relay_polls_total",
-			Help: "Total number of outbox polling ticks.",
-		}),
-		claimedTotal: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "outbox_relay_claimed_total",
-			Help: "Total number of claimed outbox rows.",
-		}),
-		sentTotal: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "outbox_relay_sent_total",
-			Help: "Total number of outbox rows marked as sent.",
-		}),
-		claimErrorsTotal: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "outbox_relay_claim_errors_total",
-			Help: "Total number of claim errors.",
-		}),
-		markErrorsTotal: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "outbox_relay_mark_errors_total",
-			Help: "Total number of errors while updating outbox rows.",
-		}),
-		requeuedTotal: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "outbox_relay_requeued_total",
-			Help: "Total number of stuck outbox rows requeued back to pending.",
-		}),
-		requeueErrorsTotal: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "outbox_relay_requeue_errors_total",
-			Help: "Total number of requeue errors.",
-		}),
-		lagSeconds: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "outbox_lag_seconds",
-			Help: "Lag in seconds between now and the oldest claimed outbox row.",
-		}),
+func tick(ctx context.Context, log *slog.Logger, store *outbox.Store, producer *kafkax.Producer, met *outbox.Metrics, batchSize int, processingTimeout time.Duration) error {
+	if _, err := store.ResetStuck(ctx, processingTimeout); err != nil {
+		return err
 	}
 
-	reg.MustRegister(
-		m.pollsTotal,
-		m.claimedTotal,
-		m.sentTotal,
-		m.claimErrorsTotal,
-		m.markErrorsTotal,
-		m.requeuedTotal,
-		m.requeueErrorsTotal,
-		m.lagSeconds,
-	)
+	if lag, err := store.LagSeconds(ctx); err == nil {
+		met.LagSeconds.Set(lag)
+	}
 
-	return m
+	rows, err := store.ClaimPending(ctx, batchSize)
+	if err != nil {
+		return err
+	}
+
+	for _, e := range rows {
+		var ridHolder struct {
+			RequestID string `json:"request_id"`
+		}
+		_ = json.Unmarshal(e.Payload, &ridHolder)
+
+		env := events.Envelope{
+			EventID:     e.EventID,
+			EventType:   e.EventType,
+			OccurredAt:  e.CreatedAt,
+			Aggregate:   e.Aggregate,
+			AggregateID: e.AggregateID,
+			RequestID:   ridHolder.RequestID,
+			Payload:     e.Payload,
+		}
+		b, err := json.Marshal(env)
+		if err != nil {
+			_ = store.MarkFailed(ctx, e.ID, time.Now().Add(backoff(e.Attempts)), "marshal: "+err.Error())
+			met.FailedTotal.WithLabelValues(e.EventType).Inc()
+			continue
+		}
+
+		if err := producer.Produce(ctx, []byte(e.AggregateID), b, 5*time.Second); err != nil {
+			next := time.Now().Add(backoff(e.Attempts))
+			_ = store.MarkFailed(ctx, e.ID, next, "kafka: "+err.Error())
+			met.FailedTotal.WithLabelValues(e.EventType).Inc()
+			continue
+		}
+
+		if err := store.MarkSent(ctx, e.ID); err != nil {
+			log.Error("mark_sent_failed", slog.Int64("outbox_id", e.ID), slog.String("err", err.Error()))
+		}
+		met.PublishedTotal.WithLabelValues(e.EventType).Inc()
+	}
+
+	return nil
+}
+
+func backoff(attempt int) time.Duration {
+	if attempt <= 1 {
+		return 500 * time.Millisecond
+	}
+	d := time.Duration(1<<uint(min(attempt-1, 6))) * time.Second
+	if d > 60*time.Second {
+		d = 60 * time.Second
+	}
+	return d
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
