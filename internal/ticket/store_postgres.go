@@ -3,6 +3,7 @@ package ticket
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 )
 
@@ -15,18 +16,51 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 }
 
 func (s *PostgresStore) Create(ctx context.Context, t Ticket) (Ticket, error) {
-	const q = `
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return Ticket{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	const qTicket = `
 INSERT INTO tickets (id, title, description, status, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, title, description, status, created_at, updated_at;
 `
 	var out Ticket
-	err := s.db.QueryRowContext(ctx, q,
+	err = tx.QueryRowContext(ctx, qTicket,
 		t.ID, t.Title, t.Description, t.Status, t.CreatedAt, t.UpdatedAt,
 	).Scan(&out.ID, &out.Title, &out.Description, &out.Status, &out.CreatedAt, &out.UpdatedAt)
 	if err != nil {
 		return Ticket{}, err
 	}
+
+	payloadObj := map[string]any{
+		"ticket_id":  out.ID,
+		"title":      out.Title,
+		"status":     out.Status,
+		"created_at": out.CreatedAt,
+	}
+	payload, err := json.Marshal(payloadObj)
+	if err != nil {
+		return Ticket{}, err
+	}
+
+	const qOutbox = `
+INSERT INTO outbox (aggregate, aggregate_id, event_type, payload)
+VALUES ($1, $2, $3, $4::jsonb);
+`
+	_, err = tx.ExecContext(ctx, qOutbox,
+		"ticket", out.ID, "ticket.created", payload,
+	)
+	if err != nil {
+		return Ticket{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Ticket{}, err
+	}
+
 	return out, nil
 }
 
