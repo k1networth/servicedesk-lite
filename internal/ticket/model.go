@@ -27,13 +27,13 @@ func (r CreateTicketRequest) Validate() error {
 	if len(title) < 3 {
 		return ValidationError("title must be at least 3 characters")
 	}
-	if len(title) > 120 {
-		return ValidationError("title must be at most 120 characters")
+	if len(title) > 200 {
+		return ValidationError("title must be at most 200 characters")
 	}
 
 	desc := strings.TrimSpace(r.Description)
-	if len(desc) > 2000 {
-		return ValidationError("description must be at most 2000 characters")
+	if len(desc) > 5000 {
+		return ValidationError("description must be at most 5000 characters")
 	}
 
 	return nil

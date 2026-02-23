@@ -1,10 +1,32 @@
-# Local dev (compose) — TODO (под high-RPS/HA)
+# Local dev (docker compose)
 
-Локальная среда должна помогать разработке, но не превращаться в мини-прод.
+Локальная среда должна помогать разработке, но не превращаться в мини-прод. Поэтому зависимости добавляем **эволюционно**.
 
-## Базовая локалка (обязательная)
-TODO:
-- [ ] Postgres single
+## База (уже есть)
+
+### Postgres (single)
+
+Файл: `infra/local/compose.yaml`
+
+Команды:
+
+```bash
+cp .env.example .env
+make db-up
+make db-ps
+make migrate-up
+```
+
+Остановить и удалить volume:
+
+```bash
+make db-down
+```
+
+> Важно: `migrate-up` требует переменную `DATABASE_URL` (см. `.env.example`).
+
+## Базовая локалка (дальше по итерациям)
+План:
 - [ ] Redis single
 - [ ] Kafka single
 

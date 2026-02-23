@@ -61,8 +61,8 @@ func TestCreateTicket201(t *testing.T) {
 	if got.ID == "" {
 		t.Fatalf("expected id to be set")
 	}
-	if got.Status != "open" {
-		t.Fatalf("expected status %q, got %q", "open", got.Status)
+	if got.Status != "new" {
+		t.Fatalf("expected status %q, got %q", "new", got.Status)
 	}
 	if got.Title != "Printer is broken" {
 		t.Fatalf("expected title %q, got %q", "Printer is broken", got.Title)

@@ -20,9 +20,9 @@ ServiceDesk-lite — учебный (pet) проект для ВКР: **прос
 
 Сервисы (простые по функционалу, “взрослые” по инженерии):
 
-- **ticket-service** — HTTP API для тикетов (сейчас in-memory; далее Postgres + Redis)
-- **outbox-relay** — Transactional Outbox → публикация событий в Kafka (scale-out)
-- **notification-service** — Kafka consumer → уведомления (идемпотентно, DLQ)
+- **ticket-service** — HTTP API для тикетов (**in-memory или Postgres**, см. ниже)
+- **outbox-relay** — Transactional Outbox → публикация событий в Kafka (scale-out) *(в планах)*
+- **notification-service** — Kafka consumer → уведомления (идемпотентно, DLQ) *(в планах)*
 
 Зависимости (эволюционно):
 
@@ -85,6 +85,19 @@ go run ./cmd/ticket-service
 
 По умолчанию слушает `:8080` (см. `internal/shared/config` и `.env`).
 
+#### Режимы хранения
+
+- **In-memory**: если `DATABASE_URL` не задан.
+- **Postgres**: если задан `DATABASE_URL` (см. `.env.example`).
+
+Для Postgres (docker compose):
+
+```bash
+make db-up
+make migrate-up
+DATABASE_URL=postgres://... go run ./cmd/ticket-service
+```
+
 Полезные эндпоинты:
 
 - `GET /healthz`
@@ -101,15 +114,16 @@ go run ./cmd/ticket-service
 Статус (на сейчас):
 
 1. **Bootstrap**: go.mod + Makefile (fmt/lint/test/tools) + базовые стандарты — ✅
-2. **ticket-service skeleton**: health/ready, request-id, structured logs, graceful shutdown — ✅
-3. **Postgres**: миграции + CRUD тикетов — ⏳ (после фиксации API контракта)
-4. **Kafka base**: топики, producer/consumer, семантика at-least-once — ⏳
-5. **Transactional Outbox**: relay scale-out (SKIP LOCKED), метрики lag — ⏳
-6. **OpenAPI контракт**: `api/openapi/ticket-service.yaml` + простая проверка спеки — 🔜
-7. **Redis**: cache + idempotency-key, политика TTL/invalidation — ⏳
-8. **Observability**: Prometheus/Grafana + логи (ELK/Loki) + (опц.) tracing — ⏳
-9. **Kubernetes**: Helm, HPA/PDB/anti-affinity, rollout без даунтайма — ⏳
-10. **HA dependencies**: Kafka 3 brokers, Redis HA, Postgres HA/оператор (или managed) + демо отказоустойчивости — ⏳
+2. **ticket-service skeleton**: health/ready, request-id, access log, graceful shutdown, /metrics — ✅
+3. **OpenAPI контракт**: `api/openapi/ticket-service.yaml` + `make openapi-lint` — ✅
+4. **Postgres MVP**: миграции + Create/Get тикетов + transactional insert в outbox — ✅
+5. **ticket-service расширение**: list/close + индексы/оптимизации + интеграционные тесты — ⏳
+6. **Transactional Outbox relay**: scale-out (SKIP LOCKED), retries/backoff, метрики lag — ⏳
+7. **Kafka base**: топики, producer/consumer, семантика at-least-once — ⏳
+8. **Redis**: cache + idempotency-key, политика TTL/invalidation — ⏳
+9. **Observability**: Prometheus/Grafana + логи (ELK/Loki) + (опц.) tracing — ⏳
+10. **Kubernetes**: Helm, HPA/PDB/anti-affinity, rollout без даунтайма — ⏳
+11. **HA dependencies**: Kafka 3 brokers, Redis HA, Postgres HA/оператор (или managed) + демо отказоустойчивости — ⏳
 
 ## License
 

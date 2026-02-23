@@ -8,13 +8,14 @@ HTTP API для управления тикетами.
 OpenAPI: `api/openapi/ticket-service.yaml`
 
 Сейчас:
-- `GET /healthz`, `GET /readyz`
-- `POST /tickets` (in-memory)
-- `GET /tickets/{id}` (in-memory)
+- `GET /healthz`, `GET /readyz` *(пока plain text; будет приведено к JSON по OpenAPI)*
+- `POST /tickets` (in-memory или Postgres)
+- `GET /tickets/{id}` (in-memory или Postgres)
 
 Дальше:
-- Итерация 6: OpenAPI контракт `api/openapi/ticket-service.yaml`
-- Затем: Postgres + миграции, идемпотентность, метрики, интеграционные тесты
+- Привести реализацию к контракту OpenAPI (health/ready JSON, Location header и т.п.)
+- Добавить list/close, индексы, интеграционные тесты
+- Затем: идемпотентность (Redis) и outbox-relay
 
 ## Run locally
 
@@ -37,6 +38,7 @@ go run ./cmd/ticket-service
 
 - `HTTP_ADDR` — адрес HTTP сервера (например `:8080`)
 - `LOG_LEVEL` — debug/info/warn/error
+- `DATABASE_URL` — если задан, сервис работает с Postgres (и пишет в outbox в одной транзакции)
 
 ## Error format (global)
 

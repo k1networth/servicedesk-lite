@@ -31,6 +31,7 @@ GO_TEST_FLAGS ?= -count=1
 .PHONY: help versions tools fmt lint test check tidy download clean
 .PHONY: openapi-lint openapi-lint-ticket
 .PHONY: db-up db-down db-ps migrate-up migrate-down guard-%
+.PHONY: run-ticket run-relay
 
 help: ## Show available commands
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_.-]+:.*##/ {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -95,3 +96,9 @@ migrate-up: guard-DATABASE_URL ## Run DB migrations up (docker)
 
 migrate-down: guard-DATABASE_URL ## Rollback last migration (docker)
 	@$(MIGRATE) -path migrations -database "$(DATABASE_URL)" down 1
+
+run-ticket: ## Run ticket-service locally
+	@go run ./cmd/ticket-service
+
+run-relay: guard-DATABASE_URL ## Run outbox-relay locally
+	@go run ./cmd/outbox-relay

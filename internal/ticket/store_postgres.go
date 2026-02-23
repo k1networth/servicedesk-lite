@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+
+	"github.com/k1networth/servicedesk-lite/internal/shared/requestid"
 )
 
 type PostgresStore struct {
@@ -35,11 +37,13 @@ RETURNING id, title, description, status, created_at, updated_at;
 		return Ticket{}, err
 	}
 
+	rid := requestid.Get(ctx)
 	payloadObj := map[string]any{
 		"ticket_id":  out.ID,
 		"title":      out.Title,
 		"status":     out.Status,
 		"created_at": out.CreatedAt,
+		"request_id": rid,
 	}
 	payload, err := json.Marshal(payloadObj)
 	if err != nil {

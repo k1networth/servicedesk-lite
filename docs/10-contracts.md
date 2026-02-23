@@ -1,6 +1,13 @@
-# Contracts / Spec — API + Kafka + DB + Redis + Metrics (RPS/HA oriented) — TODO
+# Contracts / Spec — API + Kafka + DB + Redis + Metrics (RPS/HA oriented)
 
 Здесь “спецификация” проекта. Реализация должна ей соответствовать.
+
+## Статус на текущую итерацию
+
+- OpenAPI для ticket-service есть: `api/openapi/ticket-service.yaml`
+- Реализация ticket-service частично совпадает с контрактом.
+  - `POST /tickets`, `GET /tickets/{id}` — реализованы (in-memory или Postgres)
+  - `GET /healthz`, `GET /readyz` — реализованы, но формат ответа пока отличается от OpenAPI (plain text вместо JSON)
 
 ---
 
