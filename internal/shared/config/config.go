@@ -3,9 +3,9 @@ package config
 import "os"
 
 type Config struct {
-	AppEnv       string
-	HTTPAddr     string
-	DatabaseURL  string
+	AppEnv      string
+	HTTPAddr    string
+	DatabaseURL string
 }
 
 func Load() Config {

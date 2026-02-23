@@ -28,7 +28,11 @@ func main() {
 			log.Error("db_open_failed", slog.String("err", err.Error()))
 			return
 		}
-		defer pg.Close()
+		defer func() {
+			if err := pg.Close(); err != nil {
+				log.Error("db_close_failed", slog.String("err", err.Error()))
+			}
+		}()
 
 		store = ticket.NewPostgresStore(pg)
 		log.Info("storage", slog.String("type", "postgres"))
