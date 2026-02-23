@@ -3,8 +3,9 @@ package config
 import "os"
 
 type Config struct {
-	AppEnv   string
-	HTTPAddr string
+	AppEnv       string
+	HTTPAddr     string
+	DatabaseURL  string
 }
 
 func Load() Config {
@@ -20,6 +21,10 @@ func Load() Config {
 	}
 	if v := os.Getenv("HTTP_ADDR"); v != "" {
 		cfg.HTTPAddr = v
+	}
+
+	if v := os.Getenv("DATABASE_URL"); v != "" {
+		cfg.DatabaseURL = v
 	}
 
 	return cfg

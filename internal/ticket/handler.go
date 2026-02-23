@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type Handler struct {
@@ -21,7 +23,7 @@ func (h *Handler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 
 	var req CreateTicketRequest
 	dec := json.NewDecoder(r.Body)
@@ -36,7 +38,6 @@ func (h *Handler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// запретим мусор после JSON объекта
 	if dec.More() {
 		WriteErrorR(w, r, http.StatusBadRequest, "validation_error", "invalid json")
 		return
@@ -52,8 +53,10 @@ func (h *Handler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 		Description: strings.TrimSpace(req.Description),
 		Status:      "open",
 		CreatedAt:   time.Now().UTC(),
+		UpdatedAt:   time.Now().UTC(),
 	}
 
+	t.ID = uuid.NewString()
 	created, err := h.Store.Create(r.Context(), t)
 	if err != nil {
 		h.Log.Error("ticket_create_failed", slog.String("err", err.Error()))

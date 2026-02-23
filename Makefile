@@ -79,13 +79,13 @@ openapi-lint-ticket:
 	@$(DOCKER_RUN) stoplight/spectral:6 lint $(OPENAPI_TICKET)
 
 db-up: ## Start local dependencies via docker compose
-	@docker compose -f $(DB_COMPOSE) up -d
+	@docker compose --env-file $(ENV_FILE) -f $(DB_COMPOSE) up -d
 
 db-down: ## Stop local dependencies (and remove volumes)
-	@docker compose -f $(DB_COMPOSE) down -v
+	@docker compose --env-file $(ENV_FILE) -f $(DB_COMPOSE) down -v
 
 db-ps: ## Show local dependencies status
-	@docker compose -f $(DB_COMPOSE) ps
+	@docker compose --env-file $(ENV_FILE) -f $(DB_COMPOSE) ps
 
 guard-%:
 	@if [[ -z "$($*)" ]]; then echo "ERROR: $* is empty"; exit 1; fi

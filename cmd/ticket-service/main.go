@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/k1networth/servicedesk-lite/internal/shared/config"
+	"github.com/k1networth/servicedesk-lite/internal/shared/db"
 	"github.com/k1networth/servicedesk-lite/internal/shared/httpx"
 	"github.com/k1networth/servicedesk-lite/internal/shared/logger"
 	"github.com/k1networth/servicedesk-lite/internal/ticket"
@@ -17,7 +19,24 @@ func main() {
 	cfg := config.Load()
 	log := logger.New(appName, cfg.AppEnv)
 
-	store := ticket.NewInMemoryStore()
+	ctx := context.Background()
+
+	var store ticket.Store
+	if cfg.DatabaseURL != "" {
+		pg, err := db.OpenPostgres(ctx, db.PostgresConfig{DatabaseURL: cfg.DatabaseURL})
+		if err != nil {
+			log.Error("db_open_failed", slog.String("err", err.Error()))
+			return
+		}
+		defer pg.Close()
+
+		store = ticket.NewPostgresStore(pg)
+		log.Info("storage", slog.String("type", "postgres"))
+	} else {
+		store = ticket.NewInMemoryStore()
+		log.Info("storage", slog.String("type", "memory"))
+	}
+
 	ticketH := &ticket.Handler{
 		Log:   log,
 		Store: store,
