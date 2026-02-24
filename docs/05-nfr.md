@@ -1,70 +1,60 @@
-# NFR — нефункциональные требования (High RPS + HA) — TODO
+# NFR — нефункциональные требования (High RPS + HA)
 
-Этот документ нужен, чтобы проект выглядел “взросло” и чтобы ты не писал хаосом.
+Этот документ нужен, чтобы проект выглядел инженерно: есть SLO, семантики доставки, принципы масштабирования и наблюдаемости.
 
 ## 1) Термины
-TODO:
-- [ ] RPS: requests per second
-- [ ] P95/P99 latency
-- [ ] SLI/SLO/SLA (что измеряем и какие цели)
-- [ ] Availability (доступность), Error budget
-- [ ] HA vs DR (высокая доступность vs катастрофоустойчивость)
+- **RPS** — requests per second.
+- **P95/P99 latency** — задержка, ниже которой укладываются 95%/99% запросов.
+- **SLI** — метрика качества (например, доля 2xx/3xx или P95 latency).
+- **SLO** — целевое значение SLI (например, availability 99.9%).
+- **SLA** — контракт с последствиями (в дипломе обычно не требуется).
+- **Availability** — доступность сервиса.
+- **Error budget** — допустимая доля ошибок/простоя, вытекает из SLO.
+- **HA** — высокая доступность (переживаем падение части компонентов).
+- **DR** — катастрофоустойчивость (восстановление после больших аварий, обычно отдельная тема).
 
-## 2) Целевые SLO (для диплома можно задать реалистично)
-TODO: выбрать и зафиксировать цифры (примерные ориентиры)
-- [ ] Ticket API availability: 99.9% (за месяц)
-- [ ] P95 latency для GET /tickets: < 200ms при N RPS
-- [ ] P95 latency для POST /tickets: < 300ms при N RPS
-- [ ] Error rate: < 0.1% 5xx
-- [ ] Async pipeline: “event published to Kafka” в пределах 2s (P99)
+## 2) Целевые SLO (реалистичные для диплома)
+- Ticket API availability: **99.9%/месяц**.
+- P95 latency:
+  - GET /tickets: **< 200 ms** при 200 RPS
+  - POST /tickets: **< 300 ms** при 50 RPS
+- Error rate: **< 0.1%** 5xx.
+- Async pipeline: "ticket created" → "event published" (outbox → Kafka): **P99 < 2 s**.
 
-## 3) Трафик и нагрузка (модель)
-TODO:
-- [ ] Опиши типичный паттерн:
-  - 80% reads (GET/list), 20% writes (create/close)
-  - list чаще, чем get
-  - attachments реже (например 1%)
-- [ ] Пиковая нагрузка:
-  - N RPS steady, M RPS peak (например 200/1000 для демо)
-- [ ] Размеры payload:
-  - title/description ограничения
-  - attachments max size (например 10MB)
+> Числа можно уточнить после нагрузочного теста, но важно, что цели зафиксированы.
 
-## 4) Архитектурные принципы для высокого RPS
-TODO:
-- [ ] stateless сервисы (горизонтальное масштабирование)
-- [ ] connection pooling (Postgres: pgxpool + лимиты)
-- [ ] timeouts и cancellation (context deadlines)
-- [ ] backpressure:
+## 3) Модель нагрузки
+- 80% read (GET/list), 20% write (create/update).
+- List чаще, чем get.
+- Attachments редкие (например, 1%).
+
+## 4) Принципы для высокого RPS
+- Stateless сервисы → горизонтальное масштабирование.
+- Pooling соединений к Postgres (pgxpool): лимиты + timeouts.
+- Timeouts/cancellation везде через context.
+- Backpressure:
   - ограничение concurrency на handler/usecase уровне
-  - защита от “thundering herd” (кэш + singleflight опционально)
-- [ ] caching:
-  - list endpoints кэшировать кратко (60s)
-  - ETag/If-None-Match (опционально)
-- [ ] pagination:
-  - offset pagination на старте
-  - TODO: миграция на cursor-based pagination, если надо
+  - защита от thundering herd (кэш/дедупликация — опционально)
+- Pagination:
+  - на старте offset/limit
+  - при росте — переход на cursor-based pagination (планируется)
 
-## 5) HA принципы (что должно переживать)
-TODO:
-- [ ] Под рестартом пода сервис не теряет корректность (idempotency)
-- [ ] Потеря 1 ноды Kafka/Redis/Postgres не должна останавливать систему (в прод варианте)
-- [ ] Rolling updates без даунтайма:
+## 5) HA принципы
+- Рестарт пода не ломает корректность (idempotency на consumer стороне).
+- Rolling updates без даунтайма:
   - readiness gates
-  - graceful shutdown (дрейнить запросы, остановить consumer корректно)
-- [ ] PDB и anti-affinity в k8s
+  - graceful shutdown
+- Для k8s: PDB + topology spread/anti-affinity (планируется в Iteration 3).
 
-## 6) Data consistency и семантики доставки
-TODO:
-- [ ] Sync path (HTTP): ticket created -> 201 после коммита БД
-- [ ] Async path (Kafka):
-  - at-least-once
-  - idempotent consumer через processed_events
-- [ ] exactly-once: не обязателен, но опиши почему выбрал at-least-once + idempotency
+## 6) Семантика доставки и консистентность
+- Sync path (HTTP): ticket created → 201 после коммита в БД.
+- Async path (Kafka): **at-least-once**.
+- Idempotency consumer: таблица `processed_events` защищает от дублей.
+- Exactly-once не требуется: проще и надёжнее at-least-once + idempotency.
 
-## 7) Capacity “на пальцах” (для защиты)
-TODO:
-- [ ] Postgres: R/W throughput, индексы, VACUUM
-- [ ] Kafka: partitions, replication, throughput, lag
-- [ ] Redis: memory sizing, eviction policy
-- [ ] K8s: requests/limits, HPA targets
+## 7) Capacity (в общих чертах)
+- Postgres: индексы + анализ запросов + autovacuum.
+- Kafka: партиции, ключ (ticket_id), lag алерты.
+- K8s: requests/limits + HPA targets.
+
+Детали по capacity и k8s — docs/90-capacity.md и docs/TODO.md.

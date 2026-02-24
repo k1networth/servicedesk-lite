@@ -1,26 +1,32 @@
-# Testing — TODO (включая нагрузку и отказоустойчивость)
+# Testing
 
-## Unit tests
-TODO:
-- [ ] domain validation
-- [ ] usecases orchestration (mock repos)
-- [ ] error mapping
+## Что уже есть
 
-## Integration tests
-TODO:
-- [ ] Postgres: CRUD + outbox rows
-- [ ] Kafka: relay publishes, consumer processes
-- [ ] Redis: idempotency + cache
+### Unit tests
+- Базовые unit-тесты есть (например, внутренние пакеты с логикой тикетов).
+- Расширение unit coverage — опционально (не блокирует диплом), но можно добавить точечно.
 
-## Load tests
-TODO:
-- [ ] k6/vegeta:
-  - GET /tickets at N RPS
-  - POST /tickets at M RPS
-- [ ] измерить P95/P99
+### E2E (Local)
+Проверяет happy-path: ticket → outbox → kafka → consumer → processed_events.
 
-## Chaos/Resilience tests (минимум)
-TODO:
-- [ ] убить relay -> lag растёт -> после восстановления догоняет
-- [ ] убить consumer -> lag растёт -> после восстановления догоняет
-- [ ] simulate duplicate events -> consumer idempotent
+Команды:
+- `make e2e`
+
+### E2E (Compose core)
+То же самое, но против полностью контейнеризированного стека (без `go run`).
+
+Команды:
+- `make up`
+- `make e2e-core`
+- `make down`
+
+### Resilience demos (Iteration 1)
+Демо-сценарии для защиты (наблюдаемость + надёжность):
+- `./scripts/e2e_local.sh --demo-notify` — retries → processed_events=failed → DLQ
+- `./scripts/e2e_local.sh --demo-outbox` — Kafka down → outbox=failed + метрики
+
+## Что можно добавить позже (не блокирует текущую стадию)
+- Нагрузочные тесты (k6/vegeta) + замеры P95/P99
+- Chaos/resilience сценарии в k8s (kill pod, проверка lag/метрик)
+
+План работ по нагрузке/хаосу — docs/TODO.md.
