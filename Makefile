@@ -12,6 +12,7 @@ GOIMPORTS := $(BIN_DIR)/goimports
 
 OPENAPI_TICKET := api/openapi/ticket-service.yaml
 DB_COMPOSE := infra/local/compose.yaml
+CORE_COMPOSE := infra/local/compose.core.yaml
 
 ENV_FILE := $(CURDIR)/.env
 -include $(ENV_FILE)
@@ -39,7 +40,8 @@ GROUP ?= notification-service
 .PHONY: help versions tools fmt lint test check tidy download clean
 .PHONY: openapi-lint openapi-lint-ticket
 .PHONY: db-up db-down db-ps db-logs db-reset migrate-up migrate-down guard-%
-.PHONY: run-ticket run-relay run-notify e2e
+.PHONY: run-ticket run-relay run-notify e2e e2e-core
+.PHONY: up down ps logs
 .PHONY: diag diag-topics diag-peek diag-outbox diag-processed diag-groups diag-group
 
 help: ## Show available commands
@@ -102,6 +104,18 @@ db-logs: ## Follow docker compose logs
 
 db-reset: db-down db-up ## Recreate local dependencies from scratch (with fresh volumes)
 
+up: ## Start full local stack (postgres+kafka+services) via docker compose
+	@docker compose --env-file $(ENV_FILE) -f $(CORE_COMPOSE) up -d --build
+
+down: ## Stop full local stack (and remove volumes)
+	@docker compose --env-file $(ENV_FILE) -f $(CORE_COMPOSE) down -v
+
+ps: ## Show full local stack status
+	@docker compose --env-file $(ENV_FILE) -f $(CORE_COMPOSE) ps
+
+logs: ## Follow full local stack logs
+	@docker compose --env-file $(ENV_FILE) -f $(CORE_COMPOSE) logs -f --tail=200
+
 guard-%:
 	@if [[ -z "$($*)" ]]; then echo "ERROR: $* is empty"; exit 1; fi
 
@@ -122,6 +136,9 @@ run-notify: ## Run notification-service (Ctrl+C is OK)
 
 e2e: ## Run local end-to-end check (scripts/e2e_local.sh)
 	@./scripts/e2e_local.sh
+
+e2e-core: ## Run end-to-end check against docker compose core stack (no go run)
+	@./scripts/e2e_compose.sh
 
 diag: ## Show diag script help
 	@./scripts/diag.sh

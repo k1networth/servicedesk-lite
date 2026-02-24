@@ -67,6 +67,22 @@
 ./scripts/e2e_local.sh
 ```
 
+### 2a) Полный стек в контейнерах (compose core)
+
+Если нужно запускать **всё как набор контейнеров** (без `go run`), используй compose core:
+
+```bash
+make up
+make e2e-core
+make down
+```
+
+То же самое напрямую скриптом:
+
+```bash
+./scripts/e2e_compose.sh
+```
+
 Демо-сценарий (показать надежность на защите):
 ```bash
 # 1) принудительный фейл consumer → retries → processed_events=failed + DLQ
@@ -122,8 +138,11 @@ curl -i -X POST http://localhost:8080/tickets   -H 'Content-Type: application/js
 
 - `make check` — fmt + lint + test
 - `make db-up` / `make db-down` — локальная инфраструктура (compose)
+- `make up` / `make down` / `make logs` — полный стек (postgres+kafka+3 сервиса) в контейнерах
 - `make migrate-up` — миграции
 - `make run-ticket` / `make run-relay` / `make run-notify` — запуск сервисов
+- `make e2e` — E2E (deps в docker, сервисы через `go run`)
+- `make e2e-core` — E2E по compose core (всё в контейнерах)
 
 ## Заметки
 
