@@ -15,6 +15,8 @@ make run-relay
 - `BATCH_SIZE` (по умолчанию `50`)
 - `OUTBOX_PROCESSING_TIMEOUT` (по умолчанию `30s`)
 - `METRICS_ADDR` (по умолчанию `:9090`)
+- `OUTBOX_RELAY_MAX_ATTEMPTS` (по умолчанию `10`) — лимит попыток публикации события
+- `KAFKA_DLQ_TOPIC` (опционально) — писать события в DLQ при исчерпании попыток
 
 ## Поведение
 - claim `pending` событий через `FOR UPDATE SKIP LOCKED`

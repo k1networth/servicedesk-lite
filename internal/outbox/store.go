@@ -119,6 +119,20 @@ WHERE id = $1;
 	return err
 }
 
+func (s *Store) MarkDead(ctx context.Context, id int64, errMsg string) error {
+	const q = `
+UPDATE outbox
+SET status = 'failed',
+    failed_at = COALESCE(failed_at, now()),
+    processing_started_at = NULL,
+    last_error = $2,
+    updated_at = now()
+WHERE id = $1;
+`
+	_, err := s.db.ExecContext(ctx, q, id, errMsg)
+	return err
+}
+
 func (s *Store) LagSeconds(ctx context.Context) (float64, error) {
 	const q = `
 SELECT EXTRACT(EPOCH FROM (now() - created_at))

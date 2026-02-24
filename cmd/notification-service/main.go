@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -36,7 +38,17 @@ func main() {
 	brokers := env.StringsCSV("KAFKA_BROKERS", []string{"localhost:9092"})
 	topic := env.String("KAFKA_TOPIC", "tickets.events")
 	groupID := env.String("KAFKA_GROUP_ID", appName)
+	startOffset := env.String("KAFKA_START_OFFSET", "last")
+	dlqTopic := env.String("KAFKA_DLQ_TOPIC", "")
+	maxAttempts := env.Int("NOTIFY_MAX_ATTEMPTS", 10)
+	forceFail := env.Bool("NOTIFY_FORCE_FAIL", false)
+	forceFailEventType := env.String("NOTIFY_FORCE_FAIL_EVENT_TYPE", "")
 	metricsAddr := env.String("METRICS_ADDR", ":9091")
+
+	// Debug-only: log raw env values to avoid "0 treated as true" style bugs.
+	// IMPORTANT: logic must use parsed values above.
+	forceFailRaw := os.Getenv("NOTIFY_FORCE_FAIL")
+	maxAttemptsRaw := os.Getenv("NOTIFY_MAX_ATTEMPTS")
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -49,12 +61,25 @@ func main() {
 	defer func() { _ = pg.Close() }()
 
 	store := notify.NewStore(pg)
-	consumer := kafkax.NewConsumer(kafkax.ConsumerConfig{Brokers: brokers, Topic: topic, GroupID: groupID})
+	consumer := kafkax.NewConsumer(kafkax.ConsumerConfig{Brokers: brokers, Topic: topic, GroupID: groupID, StartOffset: startOffset})
 	defer func() { _ = consumer.Close() }()
+
+	var dlqProducer *kafkax.Producer
+	if dlqTopic != "" {
+		dlqProducer = kafkax.NewProducer(kafkax.ProducerConfig{
+			Brokers:      brokers,
+			Topic:        dlqTopic,
+			ClientID:     appName + "-dlq",
+			WriteTimeout: 5 * time.Second,
+		})
+		defer func() { _ = dlqProducer.Close() }()
+	}
 
 	reg := prometheus.NewRegistry()
 	processed := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "notify_processed_total", Help: "Processed events."}, []string{"event_type", "status"})
+	errors := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "notify_errors_total", Help: "Notification service errors."}, []string{"event_type", "reason"})
 	reg.MustRegister(processed)
+	reg.MustRegister(errors)
 
 	go func() {
 		mux := http.NewServeMux()
@@ -63,7 +88,18 @@ func main() {
 		_ = http.ListenAndServe(metricsAddr, mux)
 	}()
 
-	log.Info("consumer_start", slog.String("topic", topic), slog.String("group_id", groupID))
+	log.Info(
+		"consumer_start",
+		slog.String("topic", topic),
+		slog.String("group_id", groupID),
+		slog.String("start_offset", startOffset),
+		slog.String("dlq_topic", dlqTopic),
+		slog.Int("max_attempts", maxAttempts),
+		slog.String("max_attempts_raw", maxAttemptsRaw),
+		slog.Bool("force_fail", forceFail),
+		slog.String("force_fail_raw", forceFailRaw),
+		slog.String("force_fail_event_type", forceFailEventType),
+	)
 
 	for {
 		select {
@@ -81,36 +117,71 @@ func main() {
 				continue
 			}
 
-			statusLabel := "ok"
 			evType := "unknown"
+			attempt := 0
 
-			err = handleMessage(ctx, log, store, msg.Value, &evType)
-			if err != nil {
-				statusLabel = "error"
-				log.Error("message_handle_failed", slog.String("err", err.Error()))
-			}
+			// Important: kafka-go Reader (with GroupID) will continue fetching newer messages even if
+			// we don't commit. So "retry by not committing" does NOT re-deliver the same message.
+			// To implement retries deterministically, we retry handling the SAME message in-process
+			// and commit only after success or after moving it to failed/DLQ.
+			for {
+				err = handleMessage(ctx, log, store, msg.Value, forceFail, forceFailEventType, &evType, &attempt)
+				if err == nil {
+					processed.WithLabelValues(evType, "ok").Inc()
+					if err := consumer.CommitMessages(ctx, msg); err != nil {
+						log.Error("kafka_commit_failed", slog.String("err", err.Error()))
+					}
+					break
+				}
 
-			processed.WithLabelValues(evType, statusLabel).Inc()
+				reason := classify(err)
+				errors.WithLabelValues(evType, reason).Inc()
+				log.Error("message_handle_failed", slog.String("reason", reason), slog.Int("attempt", attempt), slog.String("err", err.Error()))
 
-			if err != nil {
-				continue
-			}
-			if err := consumer.CommitMessages(ctx, msg); err != nil {
-				log.Error("kafka_commit_failed", slog.String("err", err.Error()))
-				continue
+				// Non-retryable: can't decode the message.
+				if reason == "unmarshal" {
+					if dlqProducer != nil {
+						_ = dlqProducer.Produce(ctx, msg.Key, wrapDLQ(msg.Value, err), 5*time.Second)
+					}
+					_ = consumer.CommitMessages(ctx, msg)
+					processed.WithLabelValues(evType, "dead").Inc()
+					break
+				}
+
+				// No infinite loops: after max attempts, send to DLQ (best-effort), mark failed and commit.
+				if maxAttempts > 0 && attempt >= maxAttempts {
+					if dlqProducer != nil {
+						_ = dlqProducer.Produce(ctx, msg.Key, wrapDLQ(msg.Value, err), 5*time.Second)
+					}
+					_ = store.MarkDead(ctx, extractEventID(msg.Value), err.Error())
+					_ = consumer.CommitMessages(ctx, msg)
+					processed.WithLabelValues(evType, "dead").Inc()
+					break
+				}
+
+				// Backoff to avoid busy-loop while retrying same message.
+				time.Sleep(backoff(attempt))
 			}
 		}
 	}
 }
 
-func handleMessage(ctx context.Context, log *slog.Logger, store *notify.Store, value []byte, eventTypeOut *string) error {
+func handleMessage(ctx context.Context, log *slog.Logger, store *notify.Store, value []byte, forceFail bool, forceFailEventType string, eventTypeOut *string, attemptOut *int) error {
 	var env events.Envelope
 	if err := json.Unmarshal(value, &env); err != nil {
-		return err
+		return wrap("unmarshal", err)
 	}
 	*eventTypeOut = env.EventType
 
-	shouldProcess, err := store.StartProcessing(ctx, notify.ProcessedEvent{
+	// Robust match (avoid invisible whitespace / case issues in demo env vars).
+	matchForceFail := false
+	if forceFail {
+		want := strings.TrimSpace(forceFailEventType)
+		got := strings.TrimSpace(env.EventType)
+		matchForceFail = (want == "" || strings.EqualFold(want, got))
+	}
+
+	shouldProcess, attempts, _, err := store.StartProcessing(ctx, notify.ProcessedEvent{
 		EventID:     env.EventID,
 		EventType:   env.EventType,
 		Aggregate:   env.Aggregate,
@@ -118,8 +189,9 @@ func handleMessage(ctx context.Context, log *slog.Logger, store *notify.Store, v
 		Payload:     env.Payload,
 	})
 	if err != nil {
-		return err
+		return wrap("db_start", err)
 	}
+	*attemptOut = attempts
 	if !shouldProcess {
 		log.Info("event_skip_done", slog.String("event_id", env.EventID), slog.String("event_type", env.EventType))
 		return nil
@@ -127,9 +199,74 @@ func handleMessage(ctx context.Context, log *slog.Logger, store *notify.Store, v
 
 	log.Info("notify_event", slog.String("event_id", env.EventID), slog.String("event_type", env.EventType), slog.String("aggregate_id", env.AggregateID))
 
+	if matchForceFail {
+		log.Warn(
+			"force_fail_hit",
+			slog.String("event_id", env.EventID),
+			slog.String("event_type", env.EventType),
+			slog.String("force_fail_event_type", strings.TrimSpace(forceFailEventType)),
+		)
+		_ = store.MarkFailed(ctx, env.EventID, "forced failure")
+		return wrap("forced", errors.New("forced failure"))
+	}
+
 	if err := store.MarkDone(ctx, env.EventID); err != nil {
 		_ = store.MarkFailed(ctx, env.EventID, err.Error())
-		return err
+		return wrap("db_done", err)
 	}
 	return nil
+}
+
+type taggedErr struct {
+	tag string
+	err error
+}
+
+func (e taggedErr) Error() string { return e.tag + ": " + e.err.Error() }
+func (e taggedErr) Unwrap() error { return e.err }
+
+func wrap(tag string, err error) error { return taggedErr{tag: tag, err: err} }
+
+func classify(err error) string {
+	var te taggedErr
+	if ok := errors.As(err, &te); ok {
+		return te.tag
+	}
+	return "unknown"
+}
+
+func extractEventID(value []byte) string {
+	var env events.Envelope
+	_ = json.Unmarshal(value, &env)
+	return env.EventID
+}
+
+func wrapDLQ(value []byte, err error) []byte {
+	dlq := struct {
+		Error string          `json:"error"`
+		Value json.RawMessage `json:"value"`
+	}{
+		Error: err.Error(),
+		Value: value,
+	}
+	b, _ := json.Marshal(dlq)
+	return b
+}
+
+func backoff(attempt int) time.Duration {
+	if attempt <= 1 {
+		return 200 * time.Millisecond
+	}
+	d := time.Duration(1<<uint(min(attempt-1, 6))) * time.Second
+	if d > 30*time.Second {
+		d = 30 * time.Second
+	}
+	return d
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

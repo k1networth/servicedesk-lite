@@ -15,11 +15,13 @@
   - Публикует события в Kafka
   - Обновляет статусы outbox: `pending -> processing -> sent`
   - Возвращает «зависшие» события из `processing` обратно в `pending` по таймауту
+  - После `OUTBOX_RELAY_MAX_ATTEMPTS` переводит событие в `failed` (и опционально публикует в DLQ)
 
 - **notification-service** (`cmd/notification-service`)
   - Kafka consumer (group по умолчанию: `notification-service`)
   - Таблица `processed_events` для **идемпотентности**
   - Дубликаты по `event_id` безопасно скипаются
+  - После `NOTIFY_MAX_ATTEMPTS` переводит событие в `failed` (и опционально публикует в DLQ)
 
 ## Архитектура (E2E)
 
@@ -46,6 +48,12 @@
 - `DATABASE_URL=postgres://servicedesk:servicedesk@127.0.0.1:5432/servicedesk?sslmode=disable`
 - `KAFKA_BROKERS=localhost:29092`
 - `KAFKA_TOPIC=tickets.events`
+- `KAFKA_START_OFFSET=last` — для нового consumer group без commit offset: `first` или `last`
+
+Дополнительно (по умолчанию всё работает и без этого):
+- `KAFKA_DLQ_TOPIC=tickets.dlq` — если задан, outbox-relay и notification-service будут писать «непоправимые» события в DLQ
+- `OUTBOX_RELAY_MAX_ATTEMPTS=10` — лимит попыток публикации из outbox
+- `NOTIFY_MAX_ATTEMPTS=10` — лимит попыток обработки сообщения консьюмером
 
 ### 2) E2E-проверка одной командой
 Скрипт:
@@ -57,6 +65,17 @@
 
 ```bash
 ./scripts/e2e_local.sh
+```
+
+Демо-сценарий (показать надежность на защите):
+```bash
+# 1) принудительный фейл consumer → retries → processed_events=failed + DLQ
+# 2) остановка Kafka → retries relay → outbox=failed
+./scripts/e2e_local.sh --demo
+
+# выборочно
+./scripts/e2e_local.sh --demo-notify
+./scripts/e2e_local.sh --demo-outbox
 ```
 
 ### 3) Диагностика

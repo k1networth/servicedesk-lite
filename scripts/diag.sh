@@ -29,31 +29,31 @@ case "$cmd" in
     docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down -v
     ;;
   topics)
-    docker exec -it "$KAFKA_CONTAINER" bash -lc \
+    docker exec -i "$KAFKA_CONTAINER" bash -lc \
       "/opt/kafka/bin/kafka-topics.sh --bootstrap-server $KAFKA_BOOTSTRAP_IN_CONTAINER --list"
     ;;
   peek)
     topic="${2:-${KAFKA_TOPIC:-tickets.events}}"
-    docker exec -it "$KAFKA_CONTAINER" bash -lc \
+    docker exec -i "$KAFKA_CONTAINER" bash -lc \
       "/opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server $KAFKA_BOOTSTRAP_IN_CONTAINER \
        --topic $topic --from-beginning --max-messages 20 --timeout-ms $KAFKA_PEEK_TIMEOUT_MS"
     ;;
   groups)
-    docker exec -it "$KAFKA_CONTAINER" bash -lc \
+    docker exec -i "$KAFKA_CONTAINER" bash -lc \
       "/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server $KAFKA_BOOTSTRAP_IN_CONTAINER --list"
     ;;
   group)
     gid="${2:-${KAFKA_GROUP_ID:-notification-service}}"
-    docker exec -it "$KAFKA_CONTAINER" bash -lc \
+    docker exec -i "$KAFKA_CONTAINER" bash -lc \
       "/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server $KAFKA_BOOTSTRAP_IN_CONTAINER --describe --group $gid || true"
     ;;
   outbox)
-    docker exec -it "$PG_CONTAINER" psql -U "${POSTGRES_USER:-servicedesk}" -d "${POSTGRES_DB:-servicedesk}" \
-      -c "select id,event_id,status,attempts,created_at,sent_at from outbox order by created_at desc limit 10;"
+    docker exec -i "$PG_CONTAINER" psql -U "${POSTGRES_USER:-servicedesk}" -d "${POSTGRES_DB:-servicedesk}" \
+      -c "select id,event_id,status,attempts,next_retry_at,created_at,sent_at,failed_at,left(coalesce(last_error,''),80) as last_error from outbox order by created_at desc limit 10;"
     ;;
   processed)
-    docker exec -it "$PG_CONTAINER" psql -U "${POSTGRES_USER:-servicedesk}" -d "${POSTGRES_DB:-servicedesk}" \
-      -c "select event_id,event_type,status,attempts,first_seen_at,processed_at from processed_events order by first_seen_at desc limit 10;"
+    docker exec -i "$PG_CONTAINER" psql -U "${POSTGRES_USER:-servicedesk}" -d "${POSTGRES_DB:-servicedesk}" \
+      -c "select event_id,event_type,status,attempts,first_seen_at,processed_at,failed_at,left(coalesce(last_error,''),80) as last_error from processed_events order by first_seen_at desc limit 10;"
     ;;
   help|*)
     echo "usage: ./scripts/diag.sh <cmd>"

@@ -2,6 +2,7 @@ package kafkax
 
 import (
 	"context"
+	"strings"
 
 	"github.com/segmentio/kafka-go"
 )
@@ -11,9 +12,14 @@ type Consumer struct {
 }
 
 type ConsumerConfig struct {
-	Brokers  []string
-	Topic    string
-	GroupID  string
+	Brokers []string
+	Topic   string
+	GroupID string
+
+	// StartOffset controls where a NEW consumer group starts reading when it has no committed offsets.
+	// Supported values: "first" | "last". Default: "last".
+	StartOffset string
+
 	MinBytes int
 	MaxBytes int
 }
@@ -28,12 +34,18 @@ func NewConsumer(cfg ConsumerConfig) *Consumer {
 		maxB = 10e6
 	}
 
+	start := kafka.LastOffset
+	if strings.EqualFold(cfg.StartOffset, "first") {
+		start = kafka.FirstOffset
+	}
+
 	r := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:  cfg.Brokers,
-		Topic:    cfg.Topic,
-		GroupID:  cfg.GroupID,
-		MinBytes: minB,
-		MaxBytes: maxB,
+		Brokers:     cfg.Brokers,
+		Topic:       cfg.Topic,
+		GroupID:     cfg.GroupID,
+		StartOffset: start,
+		MinBytes:    minB,
+		MaxBytes:    maxB,
 	})
 	return &Consumer{r: r}
 }
