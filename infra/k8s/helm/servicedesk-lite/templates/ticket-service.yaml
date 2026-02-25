@@ -1,0 +1,103 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ticket-service
+  namespace: {{ include "servicedesk-lite.namespace" . }}
+  labels:
+    {{- include "servicedesk-lite.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ticket-service
+spec:
+  ports:
+    - name: http
+      port: {{ .Values.service.ticketService.port }}
+      targetPort: http
+  selector:
+    app.kubernetes.io/component: ticket-service
+    {{- include "servicedesk-lite.selectorLabels" . | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ticket-service
+  namespace: {{ include "servicedesk-lite.namespace" . }}
+  labels:
+    {{- include "servicedesk-lite.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ticket-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: ticket-service
+      {{- include "servicedesk-lite.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "servicedesk-lite.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ticket-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "8080"
+    spec:
+      initContainers:
+        - name: wait-postgres
+          image: {{ .Values.postgres.image | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "servicedesk-lite.fullname" . }}-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "servicedesk-lite.fullname" . }}-config
+                  key: POSTGRES_USER
+          command: ["sh", "-c"]
+          args:
+            - "until pg_isready -h postgres -U $POSTGRES_USER -d $POSTGRES_DB; do echo 'waiting for postgres...'; sleep 2; done"
+        - name: wait-kafka
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c"]
+          args:
+            - "until nc -z kafka 9092; do echo 'waiting for kafka...'; sleep 2; done"
+      containers:
+        - name: ticket-service
+          image: {{ printf "%s:%s" .Values.images.ticketService.repository .Values.images.ticketService.tag | quote }}
+          imagePullPolicy: {{ .Values.images.ticketService.pullPolicy | quote }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: APP_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "servicedesk-lite.fullname" . }}-config
+                  key: APP_ENV
+            - name: HTTP_ADDR
+              value: ":8080"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "servicedesk-lite.fullname" . }}-secret
+                  key: DATABASE_URL
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 3
+            timeoutSeconds: 2
+            failureThreshold: 20
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.resources.ticketService | nindent 12 }}

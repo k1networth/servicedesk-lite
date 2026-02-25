@@ -81,6 +81,14 @@ func main() {
 	// metrics server
 	go func() {
 		mux := http.NewServeMux()
+		mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		})
+		mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ready"))
+		})
 		mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
 		log.Info("metrics_listen", slog.String("addr", metricsAddr))
 		_ = http.ListenAndServe(metricsAddr, mux)

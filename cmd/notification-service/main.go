@@ -20,6 +20,7 @@ import (
 	"github.com/k1networth/servicedesk-lite/internal/shared/kafkax"
 	"github.com/k1networth/servicedesk-lite/internal/shared/logger"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -76,13 +77,38 @@ func main() {
 	}
 
 	reg := prometheus.NewRegistry()
+	// Standard collectors so /metrics is never empty (useful for demos & Grafana).
+	reg.MustRegister(collectors.NewGoCollector())
+	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	reg.MustRegister(collectors.NewBuildInfoCollector())
 	processed := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "notify_processed_total", Help: "Processed events."}, []string{"event_type", "status"})
 	errors := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "notify_errors_total", Help: "Notification service errors."}, []string{"event_type", "reason"})
 	reg.MustRegister(processed)
 	reg.MustRegister(errors)
+	// Kafka loop observability.
+	fetched := prometheus.NewCounter(prometheus.CounterOpts{Name: "notify_fetched_total", Help: "Fetched Kafka messages."})
+	committed := prometheus.NewCounter(prometheus.CounterOpts{Name: "notify_committed_total", Help: "Committed Kafka messages."})
+	lastProcessedUnix := prometheus.NewGauge(prometheus.GaugeOpts{Name: "notify_last_processed_unix", Help: "Unix timestamp of last processed (committed) message."})
+	reg.MustRegister(fetched)
+	reg.MustRegister(committed)
+	reg.MustRegister(lastProcessedUnix)
+
+	// Pre-create common labelsets so they show up even before first message.
+	processed.WithLabelValues("ticket.created", "ok").Add(0)
+	processed.WithLabelValues("ticket.created", "dead").Add(0)
+	errors.WithLabelValues("ticket.created", "db_start").Add(0)
+	errors.WithLabelValues("ticket.created", "unmarshal").Add(0)
 
 	go func() {
 		mux := http.NewServeMux()
+		mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		})
+		mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ready"))
+		})
 		mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
 		log.Info("metrics_listen", slog.String("addr", metricsAddr))
 		_ = http.ListenAndServe(metricsAddr, mux)
@@ -117,6 +143,27 @@ func main() {
 				continue
 			}
 
+			fetched.Inc()
+			// Log fetch with best-effort envelope info (helps prove Kafka -> consumer in demos).
+			{
+				var env events.Envelope
+				if err := json.Unmarshal(msg.Value, &env); err == nil {
+					log.Info("kafka_message_fetched",
+						slog.Int("partition", msg.Partition),
+						slog.Int64("offset", msg.Offset),
+						slog.String("event_id", env.EventID),
+						slog.String("event_type", env.EventType),
+						slog.String("aggregate_id", env.AggregateID),
+					)
+				} else {
+					log.Warn("kafka_message_fetched_unmarshal_failed",
+						slog.Int("partition", msg.Partition),
+						slog.Int64("offset", msg.Offset),
+						slog.String("err", err.Error()),
+					)
+				}
+			}
+
 			evType := "unknown"
 			attempt := 0
 
@@ -130,6 +177,10 @@ func main() {
 					processed.WithLabelValues(evType, "ok").Inc()
 					if err := consumer.CommitMessages(ctx, msg); err != nil {
 						log.Error("kafka_commit_failed", slog.String("err", err.Error()))
+					} else {
+						committed.Inc()
+						lastProcessedUnix.SetToCurrentTime()
+						log.Info("kafka_commit_ok", slog.Int("partition", msg.Partition), slog.Int64("offset", msg.Offset))
 					}
 					break
 				}
@@ -143,7 +194,13 @@ func main() {
 					if dlqProducer != nil {
 						_ = dlqProducer.Produce(ctx, msg.Key, wrapDLQ(msg.Value, err), 5*time.Second)
 					}
-					_ = consumer.CommitMessages(ctx, msg)
+					if err := consumer.CommitMessages(ctx, msg); err != nil {
+						log.Error("kafka_commit_failed", slog.String("err", err.Error()))
+					} else {
+						committed.Inc()
+						lastProcessedUnix.SetToCurrentTime()
+						log.Info("kafka_commit_ok", slog.Int("partition", msg.Partition), slog.Int64("offset", msg.Offset))
+					}
 					processed.WithLabelValues(evType, "dead").Inc()
 					break
 				}
@@ -154,7 +211,13 @@ func main() {
 						_ = dlqProducer.Produce(ctx, msg.Key, wrapDLQ(msg.Value, err), 5*time.Second)
 					}
 					_ = store.MarkDead(ctx, extractEventID(msg.Value), err.Error())
-					_ = consumer.CommitMessages(ctx, msg)
+					if err := consumer.CommitMessages(ctx, msg); err != nil {
+						log.Error("kafka_commit_failed", slog.String("err", err.Error()))
+					} else {
+						committed.Inc()
+						lastProcessedUnix.SetToCurrentTime()
+						log.Info("kafka_commit_ok", slog.Int("partition", msg.Partition), slog.Int64("offset", msg.Offset))
+					}
 					processed.WithLabelValues(evType, "dead").Inc()
 					break
 				}

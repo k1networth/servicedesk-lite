@@ -1,0 +1,49 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "servicedesk-lite.fullname" . }}-migrate
+  namespace: {{ include "servicedesk-lite.namespace" . }}
+  labels:
+    {{- include "servicedesk-lite.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 120
+  template:
+    metadata:
+      labels:
+        {{- include "servicedesk-lite.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-postgres
+          image: {{ .Values.postgres.image | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "servicedesk-lite.fullname" . }}-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "servicedesk-lite.fullname" . }}-config
+                  key: POSTGRES_USER
+          command: ["sh", "-c"]
+          args:
+            - "until pg_isready -h postgres -U $POSTGRES_USER -d $POSTGRES_DB; do echo 'waiting for postgres...'; sleep 2; done"
+      containers:
+        - name: migrate
+          image: {{ printf "%s:%s" .Values.images.migrate.repository .Values.images.migrate.tag | quote }}
+          imagePullPolicy: {{ .Values.images.migrate.pullPolicy | quote }}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "servicedesk-lite.fullname" . }}-secret
+                  key: DATABASE_URL
+          command: ["/bin/sh", "-c"]
+          args:
+            - "migrate -path /migrations -database \"$DATABASE_URL\" up"

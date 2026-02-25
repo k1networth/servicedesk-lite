@@ -1,0 +1,6 @@
+apiVersion: v2
+name: servicedesk-lite
+description: servicedesk-lite demo stack (ticket-service + outbox-relay + notification-service) with Postgres and Kafka.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

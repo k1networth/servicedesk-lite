@@ -44,6 +44,16 @@ GROUP ?= notification-service
 .PHONY: up down ps logs
 .PHONY: diag diag-topics diag-peek diag-outbox diag-processed diag-groups diag-group
 
+# k8s/kind demo helpers
+.PHONY: docker-build kind-up kind-down kind-load k8s-addons kind-demo k8s-install k8s-uninstall k8s-status k8s-port-forward
+
+KIND_CLUSTER_NAME ?= servicedesk
+KIND_CONFIG ?= infra/k8s/kind/kind-config.yaml
+
+HELM_RELEASE ?= servicedesk
+HELM_NAMESPACE ?= servicedesk
+IMAGE_TAG ?= dev
+
 help: ## Show available commands
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_.-]+:.*##/ {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
@@ -160,3 +170,57 @@ diag-groups: ## List consumer groups
 
 diag-group: ## Describe consumer group (GROUP=notification-service)
 	@./scripts/diag.sh group $(GROUP)
+
+docker-build: ## Build local images for kind/helm demo
+	@docker build -t servicedesk/ticket-service:$(IMAGE_TAG) -f cmd/ticket-service/Dockerfile .
+	@docker build -t servicedesk/outbox-relay:$(IMAGE_TAG) -f cmd/outbox-relay/Dockerfile .
+	@docker build -t servicedesk/notification-service:$(IMAGE_TAG) -f cmd/notification-service/Dockerfile .
+	@docker build -t servicedesk/migrate:$(IMAGE_TAG) -f build/migrate/Dockerfile .
+
+kind-up: ## Create kind cluster (requires kind)
+	@CLUSTER_NAME=$(KIND_CLUSTER_NAME) CONFIG=$(KIND_CONFIG) bash ./scripts/kind.sh up
+
+kind-down: ## Delete kind cluster
+	@CLUSTER_NAME=$(KIND_CLUSTER_NAME) bash ./scripts/kind.sh down
+
+kind-load: ## Load built images into kind cluster
+	@kind load docker-image --name $(KIND_CLUSTER_NAME) \
+		servicedesk/ticket-service:$(IMAGE_TAG) \
+		servicedesk/outbox-relay:$(IMAGE_TAG) \
+		servicedesk/notification-service:$(IMAGE_TAG) \
+		servicedesk/migrate:$(IMAGE_TAG)
+
+k8s-addons: ## Install ingress-nginx + metrics-server (internet required)
+	@# kind single-node prep: allow scheduling on control-plane + mark ingress-ready
+	@for n in $$(kubectl get nodes -o name 2>/dev/null); do \
+	  kubectl label $$n ingress-ready=true --overwrite >/dev/null 2>&1 || true; \
+	  kubectl taint $$n node-role.kubernetes.io/control-plane- >/dev/null 2>&1 || true; \
+	  kubectl taint $$n node-role.kubernetes.io/master- >/dev/null 2>&1 || true; \
+	done
+	@kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.11.3/deploy/static/provider/kind/deploy.yaml
+	@kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+	@# kind fix: metrics-server -> kubelet TLS/addressing
+	@kubectl -n kube-system patch deploy metrics-server --type='json' -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"},{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname"}]' >/dev/null 2>&1 || true
+	@kubectl -n kube-system rollout restart deploy metrics-server >/dev/null 2>&1 || true
+	@kubectl -n kube-system rollout status deploy metrics-server --timeout=300s
+	@kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeout=300s
+	@kubectl -n kube-system wait --for=condition=Ready pod -l k8s-app=metrics-server --timeout=300s
+
+kind-demo: docker-build kind-up kind-load k8s-addons k8s-install ## One-command kind demo (build->cluster->addons->helm)
+
+k8s-install: ## Install/upgrade Helm release into kind (requires helm+kubectl)
+	@helm upgrade --install $(HELM_RELEASE) infra/k8s/helm/servicedesk-lite \
+		-n $(HELM_NAMESPACE) --create-namespace \
+		--set images.ticketService.tag=$(IMAGE_TAG) \
+		--set images.outboxRelay.tag=$(IMAGE_TAG) \
+		--set images.notificationService.tag=$(IMAGE_TAG) \
+		--set images.migrate.tag=$(IMAGE_TAG)
+
+k8s-uninstall: ## Uninstall Helm release
+	@helm uninstall $(HELM_RELEASE) -n $(HELM_NAMESPACE)
+
+k8s-status: ## kubectl get all in namespace
+	@kubectl -n $(HELM_NAMESPACE) get all
+
+k8s-port-forward: ## Port-forward ticket-service to localhost:8080
+	@kubectl -n $(HELM_NAMESPACE) port-forward svc/ticket-service 8080:8080

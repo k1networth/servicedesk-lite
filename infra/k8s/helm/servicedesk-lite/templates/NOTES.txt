@@ -1,0 +1,17 @@
+servicedesk-lite installed into namespace: {{ include "servicedesk-lite.namespace" . }}
+
+Ticket API:
+  - Ingress: {{- if .Values.ingress.enabled }} enabled{{- else }} disabled{{- end }}
+  - Service: ticket-service:{{ .Values.service.ticketService.port }}
+
+Quick test (port-forward):
+  kubectl -n {{ include "servicedesk-lite.namespace" . }} port-forward svc/ticket-service 8080:{{ .Values.service.ticketService.port }}
+  curl -sS -X POST http://localhost:8080/tickets \
+    -H 'Content-Type: application/json' \
+    -d '{"title":"hello","description":"from k8s"}'
+  curl -sS http://localhost:8080/metrics | head
+
+Metrics:
+  - ticket-service: /metrics on :{{ .Values.service.ticketService.port }}
+  - outbox-relay:   /metrics on :{{ .Values.service.outboxRelay.port }}
+  - notification:   /metrics on :{{ .Values.service.notificationService.port }}

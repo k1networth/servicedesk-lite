@@ -1,0 +1,90 @@
+nameOverride: ""
+fullnameOverride: ""
+
+namespace:
+  create: false
+  name: servicedesk
+
+app:
+  env: dev
+
+images:
+  ticketService:
+    repository: servicedesk/ticket-service
+    tag: dev
+    pullPolicy: IfNotPresent
+  outboxRelay:
+    repository: servicedesk/outbox-relay
+    tag: dev
+    pullPolicy: IfNotPresent
+  notificationService:
+    repository: servicedesk/notification-service
+    tag: dev
+    pullPolicy: IfNotPresent
+  migrate:
+    repository: servicedesk/migrate
+    tag: dev
+    pullPolicy: IfNotPresent
+
+postgres:
+  image: postgres:16-alpine
+  database: servicedesk
+  user: servicedesk
+  # For demo only. Override in values-kind.yaml or via --set.
+  password: servicedesk
+  storage:
+    size: 1Gi
+
+kafka:
+  image: apache/kafka:3.7.0
+  topic: tickets.events
+  # Optional DLQ topic name (empty = disabled)
+  dlqTopic: ""
+
+resources:
+  ticketService:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  outboxRelay:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  notificationService:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+service:
+  ticketService:
+    port: 8080
+  outboxRelay:
+    port: 9090
+  notificationService:
+    port: 9091
+
+ingress:
+  enabled: true
+  className: nginx
+  # For kind you can leave host empty and use path routing via localhost (see infra/k8s/kind/kind-config.yaml)
+  host: ""
+  path: /
+
+hpa:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 70
+
+pdb:
+  enabled: true
+  minAvailable: 1

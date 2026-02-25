@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "servicedesk-lite.fullname" . }}-config
+  namespace: {{ include "servicedesk-lite.namespace" . }}
+  labels:
+    {{- include "servicedesk-lite.labels" . | nindent 4 }}
+data:
+  APP_ENV: {{ .Values.app.env | quote }}
+  KAFKA_BROKERS: "kafka:9092"
+  KAFKA_TOPIC: {{ .Values.kafka.topic | quote }}
+  KAFKA_DLQ_TOPIC: {{ .Values.kafka.dlqTopic | quote }}
+  POSTGRES_DB: {{ .Values.postgres.database | quote }}
+  POSTGRES_USER: {{ .Values.postgres.user | quote }}

@@ -1,0 +1,16 @@
+{{- if .Values.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ticket-service
+  namespace: {{ include "servicedesk-lite.namespace" . }}
+  labels:
+    {{- include "servicedesk-lite.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ticket-service
+spec:
+  minAvailable: {{ .Values.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: ticket-service
+      {{- include "servicedesk-lite.selectorLabels" . | nindent 6 }}
+{{- end }}
