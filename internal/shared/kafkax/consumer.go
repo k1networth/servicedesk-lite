@@ -3,12 +3,16 @@ package kafkax
 import (
 	"context"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/segmentio/kafka-go"
 )
 
 type Consumer struct {
-	r *kafka.Reader
+	mu  sync.Mutex
+	r   *kafka.Reader
+	cfg ConsumerConfig
 }
 
 type ConsumerConfig struct {
@@ -25,6 +29,12 @@ type ConsumerConfig struct {
 }
 
 func NewConsumer(cfg ConsumerConfig) *Consumer {
+	c := &Consumer{cfg: cfg}
+	c.r = newReader(cfg)
+	return c
+}
+
+func newReader(cfg ConsumerConfig) *kafka.Reader {
 	minB := cfg.MinBytes
 	maxB := cfg.MaxBytes
 	if minB == 0 {
@@ -39,23 +49,53 @@ func NewConsumer(cfg ConsumerConfig) *Consumer {
 		start = kafka.FirstOffset
 	}
 
+	// NOTE: we set MaxWait/Backoffs so FetchMessage doesn't hang forever on transient broker/metadata issues.
 	r := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:     cfg.Brokers,
-		Topic:       cfg.Topic,
-		GroupID:     cfg.GroupID,
-		StartOffset: start,
-		MinBytes:    minB,
-		MaxBytes:    maxB,
+		Brokers:        cfg.Brokers,
+		Topic:          cfg.Topic,
+		GroupID:        cfg.GroupID,
+		StartOffset:    start,
+		MinBytes:       minB,
+		MaxBytes:       maxB,
+		MaxWait:        500 * time.Millisecond,
+		ReadBackoffMin: 100 * time.Millisecond,
+		ReadBackoffMax: 1 * time.Second,
 	})
-	return &Consumer{r: r}
+	return r
 }
 
-func (c *Consumer) Close() error { return c.r.Close() }
+func (c *Consumer) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.r == nil {
+		return nil
+	}
+	err := c.r.Close()
+	c.r = nil
+	return err
+}
 
 func (c *Consumer) FetchMessage(ctx context.Context) (kafka.Message, error) {
-	return c.r.FetchMessage(ctx)
+	c.mu.Lock()
+	r := c.r
+	c.mu.Unlock()
+	return r.FetchMessage(ctx)
 }
 
 func (c *Consumer) CommitMessages(ctx context.Context, msgs ...kafka.Message) error {
-	return c.r.CommitMessages(ctx, msgs...)
+	c.mu.Lock()
+	r := c.r
+	c.mu.Unlock()
+	return r.CommitMessages(ctx, msgs...)
+}
+
+// Reopen closes the underlying reader and recreates it using the original config.
+// Useful when broker metadata becomes stale (e.g., after advertised.listeners changes) or on transient network errors.
+func (c *Consumer) Reopen() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.r != nil {
+		_ = c.r.Close()
+	}
+	c.r = newReader(c.cfg)
 }

@@ -82,9 +82,9 @@ func main() {
 	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	reg.MustRegister(collectors.NewBuildInfoCollector())
 	processed := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "notify_processed_total", Help: "Processed events."}, []string{"event_type", "status"})
-	errors := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "notify_errors_total", Help: "Notification service errors."}, []string{"event_type", "reason"})
+	errTotal := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "notify_errors_total", Help: "Notification service errors."}, []string{"event_type", "reason"})
 	reg.MustRegister(processed)
-	reg.MustRegister(errors)
+	reg.MustRegister(errTotal)
 	// Kafka loop observability.
 	fetched := prometheus.NewCounter(prometheus.CounterOpts{Name: "notify_fetched_total", Help: "Fetched Kafka messages."})
 	committed := prometheus.NewCounter(prometheus.CounterOpts{Name: "notify_committed_total", Help: "Committed Kafka messages."})
@@ -96,8 +96,8 @@ func main() {
 	// Pre-create common labelsets so they show up even before first message.
 	processed.WithLabelValues("ticket.created", "ok").Add(0)
 	processed.WithLabelValues("ticket.created", "dead").Add(0)
-	errors.WithLabelValues("ticket.created", "db_start").Add(0)
-	errors.WithLabelValues("ticket.created", "unmarshal").Add(0)
+	errTotal.WithLabelValues("ticket.created", "db_start").Add(0)
+	errTotal.WithLabelValues("ticket.created", "unmarshal").Add(0)
 
 	go func() {
 		mux := http.NewServeMux()
@@ -127,21 +127,52 @@ func main() {
 		slog.String("force_fail_event_type", forceFailEventType),
 	)
 
+	// If the reader gets stuck in a "no messages" state due to stale metadata / group assignment glitches,
+	// FetchMessage will keep timing out. To self-heal without manual restarts, periodically Reopen() after
+	// a number of consecutive timeouts.
+	const fetchTimeout = 5 * time.Second
+	const reopenAfterTimeouts = 12 // ~1 minute with fetchTimeout=5s
+	timeoutStreak := 0
+	lastReopenAt := time.Time{}
+
 	for {
 		select {
 		case <-ctx.Done():
 			log.Info("consumer_shutdown")
 			return
 		default:
-			msg, err := consumer.FetchMessage(ctx)
+			// Avoid hanging forever inside FetchMessage on transient broker/metadata issues.
+			fetchCtx, cancel := context.WithTimeout(ctx, fetchTimeout)
+			msg, err := consumer.FetchMessage(fetchCtx)
+			cancel()
 			if err != nil {
+				// Normal: no messages within timeout.
+				if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+					timeoutStreak++
+					if timeoutStreak >= reopenAfterTimeouts {
+						// Prevent tight reopen loops.
+						if time.Since(lastReopenAt) > 30*time.Second {
+							log.Warn("kafka_idle_reopen", slog.Int("timeouts", timeoutStreak))
+							consumer.Reopen()
+							lastReopenAt = time.Now()
+						}
+						timeoutStreak = 0
+						time.Sleep(200 * time.Millisecond)
+					}
+					continue
+				}
 				if ctx.Err() != nil {
 					continue
 				}
 				log.Error("kafka_fetch_failed", slog.String("err", err.Error()))
-				time.Sleep(300 * time.Millisecond)
+				// Heal: force reader re-open so it refreshes broker metadata.
+				consumer.Reopen()
+				lastReopenAt = time.Now()
+				timeoutStreak = 0
+				time.Sleep(500 * time.Millisecond)
 				continue
 			}
+			timeoutStreak = 0
 
 			fetched.Inc()
 			// Log fetch with best-effort envelope info (helps prove Kafka -> consumer in demos).
@@ -177,6 +208,9 @@ func main() {
 					processed.WithLabelValues(evType, "ok").Inc()
 					if err := consumer.CommitMessages(ctx, msg); err != nil {
 						log.Error("kafka_commit_failed", slog.String("err", err.Error()))
+						// Commit errors often indicate a broken reader/session; refresh metadata.
+						consumer.Reopen()
+						lastReopenAt = time.Now()
 					} else {
 						committed.Inc()
 						lastProcessedUnix.SetToCurrentTime()
@@ -186,7 +220,7 @@ func main() {
 				}
 
 				reason := classify(err)
-				errors.WithLabelValues(evType, reason).Inc()
+				errTotal.WithLabelValues(evType, reason).Inc()
 				log.Error("message_handle_failed", slog.String("reason", reason), slog.Int("attempt", attempt), slog.String("err", err.Error()))
 
 				// Non-retryable: can't decode the message.

@@ -1,0 +1,50 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ticket-service
+  namespace: servicedesk
+  labels:
+    release: obs
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: ticket-service
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: outbox-relay
+  namespace: servicedesk
+  labels:
+    release: obs
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: outbox-relay
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: notification-service
+  namespace: servicedesk
+  labels:
+    release: obs
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: notification-service
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s

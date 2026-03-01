@@ -45,7 +45,10 @@ GROUP ?= notification-service
 .PHONY: diag diag-topics diag-peek diag-outbox diag-processed diag-groups diag-group
 
 # k8s/kind demo helpers
-.PHONY: docker-build kind-up kind-down kind-load k8s-addons kind-demo k8s-install k8s-uninstall k8s-status k8s-port-forward
+.PHONY: docker-build kind-up kind-down kind-load k8s-addons kind-demo k8s-install k8s-uninstall k8s-status k8s-port-forward k8s-urls
+
+# observability (Prometheus+Grafana)
+.PHONY: k8s-obs-install k8s-obs-uninstall k8s-obs-apply k8s-obs-status k8s-obs-ui k8s-obs-grafana k8s-obs-prometheus k8s-obs-grafana-pf k8s-obs-prometheus-pf
 
 KIND_CLUSTER_NAME ?= servicedesk
 KIND_CONFIG ?= infra/k8s/kind/kind-config.yaml
@@ -53,6 +56,12 @@ KIND_CONFIG ?= infra/k8s/kind/kind-config.yaml
 HELM_RELEASE ?= servicedesk
 HELM_NAMESPACE ?= servicedesk
 IMAGE_TAG ?= dev
+
+OBS_RELEASE ?= obs
+OBS_NAMESPACE ?= observability
+OBS_CHART ?= prometheus-community/kube-prometheus-stack
+OBS_CHART_VERSION ?= 82.3.0
+OBS_VALUES ?= infra/k8s/observability/kube-prometheus-stack.values.yaml
 
 help: ## Show available commands
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_.-]+:.*##/ {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -76,9 +85,11 @@ $(GOIMPORTS):
 
 fmt: tools ## Format code (goimports)
 	@if [[ -z "$(GOFILES)" ]]; then echo "No .go files found (skip)."; exit 0; fi
+	@chmod +x $(GOIMPORTS) 2>/dev/null || true
 	@$(GOIMPORTS) -w $(GOFILES)
 
 lint: tools ## Run linter
+	@chmod +x $(GOLANGCI_LINT) 2>/dev/null || true
 	@$(GOLANGCI_LINT) run -c .golangci.yml ./...
 
 test: ## Run tests
@@ -222,5 +233,58 @@ k8s-uninstall: ## Uninstall Helm release
 k8s-status: ## kubectl get all in namespace
 	@kubectl -n $(HELM_NAMESPACE) get all
 
-k8s-port-forward: ## Port-forward ticket-service to localhost:8080
-	@kubectl -n $(HELM_NAMESPACE) port-forward svc/ticket-service 8080:8080
+k8s-urls: ## Print URLs for kind-in-VM demo (ingress on :8080)
+	@echo "Ticket API:  http://localhost:8080 (Ingress)"
+	@echo "  - POST http://localhost:8080/tickets"
+	@echo "Grafana:    http://localhost:8080/grafana (Ingress)"
+	@echo "Prometheus: http://localhost:8080/prometheus (Ingress)"
+	@echo "Note: kind maps ingress 80->8080 via infra/k8s/kind/kind-config.yaml."
+	@echo "      If you're running inside VirtualBox NAT, forward host:8080 -> guest:8080."
+
+k8s-port-forward: ## Port-forward ticket-service to localhost:18080 (avoid clash with kind ingress on :8080)
+	@echo "Port-forwarding ticket-service -> http://localhost:18080 (Ctrl+C to stop)";
+	@kubectl -n $(HELM_NAMESPACE) port-forward --address 0.0.0.0 svc/ticket-service 18080:8080
+
+k8s-obs-install: ## Install Prometheus+Grafana (kube-prometheus-stack)
+	@helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
+	@helm repo update >/dev/null 2>&1 || true
+	@helm upgrade --install $(OBS_RELEASE) $(OBS_CHART) \
+		-n $(OBS_NAMESPACE) --create-namespace \
+		-f $(OBS_VALUES) \
+		--version $(OBS_CHART_VERSION) \
+		--wait --timeout 10m
+
+k8s-obs-apply: ## Apply ServiceMonitors + Grafana dashboard
+	@kubectl -n $(HELM_NAMESPACE) apply -f infra/k8s/observability/servicemonitors.yaml
+	@kubectl -n $(OBS_NAMESPACE) create configmap servicedesk-dashboard \
+		--from-file=infra/k8s/observability/dashboards/servicedesk-lite.json \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@kubectl -n $(OBS_NAMESPACE) label configmap servicedesk-dashboard grafana_dashboard=1 --overwrite
+	@kubectl apply -f infra/k8s/observability/ingress-ui.yaml
+
+k8s-obs-status: ## kubectl get all in observability namespace
+	@kubectl -n $(OBS_NAMESPACE) get all
+
+k8s-obs-ui: ## Print Grafana/Prometheus URLs via ingress (no port-forward)
+	@echo "Grafana:    http://localhost:8080/grafana (admin/admin)"
+	@echo "Prometheus: http://localhost:8080/prometheus"
+	@echo "(Use 'make k8s-obs-grafana-pf' or 'make k8s-obs-prometheus-pf' only if you really need port-forward.)"
+
+k8s-obs-grafana: ## Show Grafana URL via ingress (admin/admin)
+	@echo "Grafana: http://localhost:8080/grafana (admin/admin)"
+
+k8s-obs-prometheus: ## Show Prometheus URL via ingress
+	@echo "Prometheus: http://localhost:8080/prometheus"
+
+k8s-obs-grafana-pf: ## Port-forward Grafana to localhost:3000 (admin/admin)
+	@svc=$$(kubectl -n $(OBS_NAMESPACE) get svc -l app.kubernetes.io/name=grafana,app.kubernetes.io/instance=$(OBS_RELEASE) -o jsonpath='{.items[0].metadata.name}'); \
+	 echo "Grafana PF: http://localhost:3000 (admin/admin)"; \
+	 kubectl -n $(OBS_NAMESPACE) port-forward --address 0.0.0.0 svc/$$svc 3000:80
+
+k8s-obs-prometheus-pf: ## Port-forward Prometheus UI to localhost:9090
+	@svc=$$(kubectl -n $(OBS_NAMESPACE) get svc -l app.kubernetes.io/instance=$(OBS_RELEASE) -o name | grep prometheus | head -n 1 | cut -d/ -f2); \
+	 echo "Prometheus PF: http://localhost:9090"; \
+	 kubectl -n $(OBS_NAMESPACE) port-forward --address 0.0.0.0 svc/$$svc 9090:9090
+
+k8s-obs-uninstall: ## Uninstall Prometheus+Grafana
+	@helm uninstall $(OBS_RELEASE) -n $(OBS_NAMESPACE) || true

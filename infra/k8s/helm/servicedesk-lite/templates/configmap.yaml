@@ -7,7 +7,7 @@ metadata:
     {{- include "servicedesk-lite.labels" . | nindent 4 }}
 data:
   APP_ENV: {{ .Values.app.env | quote }}
-  KAFKA_BROKERS: "kafka:9092"
+  KAFKA_BROKERS: "kafka-0.kafka-headless.{{ include "servicedesk-lite.namespace" . }}.svc.cluster.local:9092"
   KAFKA_TOPIC: {{ .Values.kafka.topic | quote }}
   KAFKA_DLQ_TOPIC: {{ .Values.kafka.dlqTopic | quote }}
   POSTGRES_DB: {{ .Values.postgres.database | quote }}

@@ -39,8 +39,9 @@ func (w *metricsRecorder) WriteHeader(code int) {
 }
 
 type Metrics struct {
-	reqTotal   *prometheus.CounterVec
-	reqLatency *prometheus.HistogramVec
+	reqTotal    *prometheus.CounterVec
+	reqLatency  *prometheus.HistogramVec
+	req5xxTotal prometheus.Counter
 }
 
 func NewMetrics(reg prometheus.Registerer) *Metrics {
@@ -52,6 +53,12 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			},
 			[]string{"route", "method", "status"},
 		),
+		req5xxTotal: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "http_requests_5xx_total",
+				Help: "Total number of HTTP 5xx responses.",
+			},
+		),
 		reqLatency: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Name:    "http_request_duration_seconds",
@@ -62,7 +69,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		),
 	}
 
-	reg.MustRegister(m.reqTotal, m.reqLatency)
+	reg.MustRegister(m.reqTotal, m.reqLatency, m.req5xxTotal)
 	return m
 }
 
@@ -88,5 +95,8 @@ func (m *Metrics) Middleware(next http.Handler) http.Handler {
 
 		m.reqTotal.WithLabelValues(route, r.Method, status).Inc()
 		m.reqLatency.WithLabelValues(route, r.Method).Observe(dur)
+		if mw.status >= 500 {
+			m.req5xxTotal.Inc()
+		}
 	})
 }

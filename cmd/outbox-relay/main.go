@@ -159,6 +159,12 @@ func tick(ctx context.Context, log *slog.Logger, store *outbox.Store, producer *
 		}
 
 		if err := producer.Produce(ctx, []byte(e.AggregateID), b, 5*time.Second); err != nil {
+			log.Warn("publish_failed",
+				slog.Int64("outbox_id", e.ID),
+				slog.String("event_type", e.EventType),
+				slog.Int("attempt", e.Attempts),
+				slog.String("err", err.Error()),
+			)
 			dead := maybeDead(ctx, log, store, dlqProducer, met, e, env, maxAttempts, "kafka: "+err.Error())
 			if !dead {
 				next := time.Now().Add(backoff(e.Attempts))

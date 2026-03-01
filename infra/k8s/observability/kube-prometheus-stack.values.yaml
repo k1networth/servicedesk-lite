@@ -1,0 +1,54 @@
+# Minimal kube-prometheus-stack setup for kind/local demo.
+# Installs Prometheus + Grafana and allows scraping ServiceMonitors from any namespace.
+
+defaultRules:
+  create: false
+
+alertmanager:
+  enabled: false
+
+grafana:
+  enabled: true
+  adminPassword: admin
+  service:
+    type: ClusterIP
+  # Expose Grafana via ingress under /grafana (no port-forward needed)
+  grafana.ini:
+    server:
+      # Works for kind-in-VM + VirtualBox NAT port-forward to :8080
+      root_url: "%(protocol)s://localhost:8080/grafana/"
+      serve_from_sub_path: true
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      # Avoid cluster-wide RBAC requirements.
+      searchNamespace: observability
+
+prometheus:
+  prometheusSpec:
+    retention: 2d
+    # Expose Prometheus UI via ingress under /prometheus (no port-forward needed)
+    externalUrl: "http://localhost:8080/prometheus"
+    routePrefix: "/prometheus"
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelector: {}
+    serviceMonitorNamespaceSelector: {}
+    podMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelector: {}
+    podMonitorNamespaceSelector: {}
+
+# Reduce noise in kind (these targets often don't exist as scrapeable services).
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+# Keep it lightweight for local demos.
+prometheus-node-exporter:
+  enabled: false

@@ -28,5 +28,14 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		),
 	}
 	reg.MustRegister(m.PublishedTotal, m.FailedTotal, m.DeadTotal, m.LagSeconds)
+
+	// Ensure time series exist even when counters are still zero.
+	// Without this, Grafana panels may show "No data" for rate/total queries
+	// until the first failure/dead event happens.
+	for _, et := range []string{"ticket.created"} {
+		m.PublishedTotal.WithLabelValues(et).Add(0)
+		m.FailedTotal.WithLabelValues(et).Add(0)
+		m.DeadTotal.WithLabelValues(et).Add(0)
+	}
 	return m
 }

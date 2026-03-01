@@ -1,0 +1,223 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "ticket-service RPS (by route)",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total[1m])) by (route)",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "ticket-service 5xx (rate, total)",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_5xx_total[1m])) * 60",
+          "legendFormat": "5xx/min"
+        },
+        {
+          "expr": "sum(http_requests_5xx_total)",
+          "legendFormat": "5xx total"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "ticket-service latency p95 (by route)",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, route))",
+          "legendFormat": "p95 {{route}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "outbox lag (seconds)",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "expr": "max(outbox_lag_seconds)",
+          "legendFormat": "lag"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "outbox published (rate)",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 16
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(outbox_published_total[1m])) by (event_type)",
+          "legendFormat": "{{event_type}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "outbox dead/failed (rate, total)",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 16
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(outbox_dead_total[5m])) * 60",
+          "legendFormat": "dead/min"
+        },
+        {
+          "expr": "sum(rate(outbox_failed_total[5m])) * 60",
+          "legendFormat": "failed/min"
+        },
+        {
+          "expr": "sum(outbox_dead_total)",
+          "legendFormat": "dead total"
+        },
+        {
+          "expr": "sum(outbox_failed_total)",
+          "legendFormat": "failed total"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "notify processed (rate)",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 23
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(notify_processed_total{status=\"ok\"}[2m])) by (event_type) * 60",
+          "legendFormat": "{{event_type}} ok/min"
+        },
+        {
+          "expr": "sum(notify_processed_total{status=\"ok\"}) by (event_type)",
+          "legendFormat": "{{event_type}} ok total"
+        },
+        {
+          "expr": "sum(notify_processed_total{status=\"dead\"}) by (event_type)",
+          "legendFormat": "{{event_type}} dead total"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "notify errors (rate)",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 23
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(notify_errors_total[2m])) by (event_type, reason) * 60",
+          "legendFormat": "{{event_type}} {{reason}}/min"
+        },
+        {
+          "expr": "sum(notify_errors_total) by (event_type, reason)",
+          "legendFormat": "{{event_type}} {{reason}} total"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "notify staleness (seconds since last commit)",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 31
+      },
+      "targets": [
+        {
+          "expr": "time() - max(notify_last_processed_unix)",
+          "legendFormat": "staleness"
+        }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": [
+    "servicedesk",
+    "demo"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "ServiceDesk Lite",
+  "uid": "servicedesk-lite",
+  "version": 1
+}
