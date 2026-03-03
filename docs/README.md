@@ -21,6 +21,10 @@
 - CI/CD (GitHub Actions: lint/test/build/deploy): `85-cicd.md`
 - Capacity planning & tuning: `90-capacity.md`
 
+### Дипломные артефакты
+- Диаграммы (C4 Context/Container, Sequence): `95-diagrams.md`
+- Воспроизведение демо (local / k8s / CI): `99-demo.md`
+
 ## Документация по сервисам
 
 - Индекс сервисов: `services/README.md`

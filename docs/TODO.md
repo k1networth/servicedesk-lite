@@ -28,8 +28,9 @@
 - [ ] CD минимум: deploy в kind в CI (smoke test)
 - [ ] (опц) GitOps (ArgoCD/Flux)
 
-## Iteration 6 — Дипломные артефакты
+## Iteration 6 — Дипломные артефакты ✅ Выполнено
 
-- [ ] C4: Context/Container/Component диаграммы
-- [ ] Sequence diagram: create ticket → outbox → relay → kafka → notify
-- [ ] Инструкция воспроизведения демо: local compose + k8s + CI
+- [x] C4: Context/Container диаграммы (Mermaid, `docs/95-diagrams.md`)
+- [x] Sequence diagram: create ticket → outbox → relay → kafka → notify
+- [x] Sequence diagram: CI/CD пайплайн
+- [x] Инструкция воспроизведения демо: local compose + k8s + CI (`docs/99-demo.md`)
