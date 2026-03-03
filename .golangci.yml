@@ -11,8 +11,6 @@ linters:
     - errcheck
     - unused
     - ineffassign
-
-issues:
   exclusions:
     rules:
       - path: _test\.go
