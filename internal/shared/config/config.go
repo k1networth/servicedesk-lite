@@ -1,6 +1,6 @@
 package config
 
-import "os"
+import "github.com/k1networth/servicedesk-lite/internal/shared/env"
 
 type Config struct {
 	AppEnv      string
@@ -11,21 +11,9 @@ type Config struct {
 func Load() Config {
 	loadDotEnv(".env")
 
-	cfg := Config{
-		AppEnv:   "dev",
-		HTTPAddr: ":8080",
+	return Config{
+		AppEnv:      env.String("APP_ENV", "dev"),
+		HTTPAddr:    env.String("HTTP_ADDR", ":8080"),
+		DatabaseURL: env.String("DATABASE_URL", ""),
 	}
-
-	if v := os.Getenv("APP_ENV"); v != "" {
-		cfg.AppEnv = v
-	}
-	if v := os.Getenv("HTTP_ADDR"); v != "" {
-		cfg.HTTPAddr = v
-	}
-
-	if v := os.Getenv("DATABASE_URL"); v != "" {
-		cfg.DatabaseURL = v
-	}
-
-	return cfg
 }

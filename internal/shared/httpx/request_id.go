@@ -29,7 +29,7 @@ func newRequestID() string {
 	var b [16]byte
 	_, err := rand.Read(b[:])
 	if err != nil {
-		return "0000000000000000"
+		return "00000000000000000000000000000000"
 	}
 	return hex.EncodeToString(b[:])
 }

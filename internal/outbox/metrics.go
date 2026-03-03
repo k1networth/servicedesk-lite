@@ -1,6 +1,9 @@
 package outbox
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"github.com/k1networth/servicedesk-lite/internal/shared/events"
+	"github.com/prometheus/client_golang/prometheus"
+)
 
 type Metrics struct {
 	PublishedTotal *prometheus.CounterVec
@@ -32,7 +35,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	// Ensure time series exist even when counters are still zero.
 	// Without this, Grafana panels may show "No data" for rate/total queries
 	// until the first failure/dead event happens.
-	for _, et := range []string{"ticket.created"} {
+	for _, et := range []string{events.EventTypeTicketCreated} {
 		m.PublishedTotal.WithLabelValues(et).Add(0)
 		m.FailedTotal.WithLabelValues(et).Add(0)
 		m.DeadTotal.WithLabelValues(et).Add(0)

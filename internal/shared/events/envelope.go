@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+const EventTypeTicketCreated = "ticket.created"
+
 type Envelope struct {
 	EventID     string          `json:"event_id"`
 	EventType   string          `json:"event_type"`

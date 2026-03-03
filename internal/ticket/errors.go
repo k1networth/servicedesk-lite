@@ -21,14 +21,6 @@ type ValidationError string
 
 func (e ValidationError) Error() string { return string(e) }
 
-func WriteError(w http.ResponseWriter, status int, code, message string) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(apiErrorResponse{
-		Error: apiError{Code: code, Message: message},
-	})
-}
-
 func WriteErrorR(w http.ResponseWriter, r *http.Request, status int, code, message string) {
 	rid := requestid.Get(r.Context())
 

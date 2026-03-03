@@ -6,8 +6,12 @@ import (
 )
 
 func New(app, env string) *slog.Logger {
+	level := slog.LevelInfo
+	if env == "dev" || env == "local" {
+		level = slog.LevelDebug
+	}
 	h := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level: level,
 	})
 
 	return slog.New(h).With(

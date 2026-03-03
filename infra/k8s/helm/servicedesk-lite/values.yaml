@@ -34,6 +34,15 @@ postgres:
   password: servicedesk
   storage:
     size: 1Gi
+  # Connection pool size per service instance.
+  maxOpenConns: 25
+  maxIdleConns: 25
+  # Postgres server tuning (passed as -c flags).
+  maxConnections: 200
+  sharedBuffers: 256MB
+  # synchronous_commit=off: skip WAL flush wait on each commit.
+  # Safe for demo/diploma load tests; do NOT use in production without replication.
+  synchronousCommit: "off"
 
 kafka:
   image: apache/kafka:3.7.0
@@ -44,24 +53,24 @@ kafka:
 resources:
   ticketService:
     requests:
-      cpu: 50m
+      cpu: 100m
       memory: 64Mi
     limits:
-      cpu: 250m
+      cpu: 1000m
       memory: 256Mi
   outboxRelay:
     requests:
       cpu: 25m
       memory: 64Mi
     limits:
-      cpu: 250m
+      cpu: 500m
       memory: 256Mi
   notificationService:
     requests:
       cpu: 25m
       memory: 64Mi
     limits:
-      cpu: 250m
+      cpu: 500m
       memory: 256Mi
 
 service:

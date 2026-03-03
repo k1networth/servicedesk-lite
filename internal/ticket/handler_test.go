@@ -27,7 +27,7 @@ func newTestServer() *httptest.Server {
 	store := ticket.NewInMemoryStore()
 	ticketH := &ticket.Handler{Log: log, Store: store}
 
-	handler := httpx.NewRouter(log, ticketH)
+	handler := httpx.NewRouter(log, ticketH, nil)
 	return httptest.NewServer(handler)
 }
 

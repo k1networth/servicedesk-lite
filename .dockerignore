@@ -1,0 +1,22 @@
+# Version control
+.git
+.github
+
+# Build output
+bin/
+
+# Infrastructure configs (not needed inside Go build container)
+infra/
+docs/
+scripts/
+api/
+
+# Environment and config
+.env
+.env.*
+.golangci.yml
+.spectral.yaml
+
+# Docs
+*.md
+LICENSE

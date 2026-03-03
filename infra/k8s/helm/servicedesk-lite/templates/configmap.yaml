@@ -12,3 +12,5 @@ data:
   KAFKA_DLQ_TOPIC: {{ .Values.kafka.dlqTopic | quote }}
   POSTGRES_DB: {{ .Values.postgres.database | quote }}
   POSTGRES_USER: {{ .Values.postgres.user | quote }}
+  DB_MAX_OPEN_CONNS: {{ .Values.postgres.maxOpenConns | quote }}
+  DB_MAX_IDLE_CONNS: {{ .Values.postgres.maxIdleConns | quote }}

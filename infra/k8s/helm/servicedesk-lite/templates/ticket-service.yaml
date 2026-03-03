@@ -83,6 +83,16 @@ spec:
                 secretKeyRef:
                   name: {{ include "servicedesk-lite.fullname" . }}-secret
                   key: DATABASE_URL
+            - name: DB_MAX_OPEN_CONNS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "servicedesk-lite.fullname" . }}-config
+                  key: DB_MAX_OPEN_CONNS
+            - name: DB_MAX_IDLE_CONNS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "servicedesk-lite.fullname" . }}-config
+                  key: DB_MAX_IDLE_CONNS
           readinessProbe:
             httpGet:
               path: /readyz

@@ -24,7 +24,7 @@ func newRouterForTest() http.Handler {
 	log := testLogger()
 	store := ticket.NewInMemoryStore()
 	ticketH := &ticket.Handler{Log: log, Store: store}
-	return httpx.NewRouter(log, ticketH)
+	return httpx.NewRouter(log, ticketH, nil)
 }
 
 func TestHealthzReturns200AndBodyOK(t *testing.T) {

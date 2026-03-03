@@ -94,25 +94,35 @@ func main() {
 	reg.MustRegister(lastProcessedUnix)
 
 	// Pre-create common labelsets so they show up even before first message.
-	processed.WithLabelValues("ticket.created", "ok").Add(0)
-	processed.WithLabelValues("ticket.created", "dead").Add(0)
-	errTotal.WithLabelValues("ticket.created", "db_start").Add(0)
-	errTotal.WithLabelValues("ticket.created", "unmarshal").Add(0)
+	processed.WithLabelValues(events.EventTypeTicketCreated, "ok").Add(0)
+	processed.WithLabelValues(events.EventTypeTicketCreated, "dead").Add(0)
+	errTotal.WithLabelValues(events.EventTypeTicketCreated, "db_start").Add(0)
+	errTotal.WithLabelValues(events.EventTypeTicketCreated, "unmarshal").Add(0)
 
-	go func() {
+	{
 		mux := http.NewServeMux()
 		mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ok"))
 		})
 		mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+			if err := pg.PingContext(r.Context()); err != nil {
+				http.Error(w, "db unavailable", http.StatusServiceUnavailable)
+				return
+			}
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ready"))
 		})
 		mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
-		log.Info("metrics_listen", slog.String("addr", metricsAddr))
-		_ = http.ListenAndServe(metricsAddr, mux)
-	}()
+		metricsSrv := &http.Server{Addr: metricsAddr, Handler: mux}
+		defer func() { _ = metricsSrv.Shutdown(context.Background()) }()
+		go func() {
+			log.Info("metrics_listen", slog.String("addr", metricsAddr))
+			if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Error("metrics_server_error", slog.String("err", err.Error()))
+			}
+		}()
+	}
 
 	log.Info(
 		"consumer_start",
@@ -257,7 +267,12 @@ func main() {
 				}
 
 				// Backoff to avoid busy-loop while retrying same message.
-				time.Sleep(backoff(attempt))
+				// Use select so shutdown (context cancellation) is handled promptly.
+				select {
+				case <-time.After(backoff(attempt)):
+				case <-ctx.Done():
+					return
+				}
 			}
 		}
 	}
@@ -361,9 +376,3 @@ func backoff(attempt int) time.Duration {
 	return d
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

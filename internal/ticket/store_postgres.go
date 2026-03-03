@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 
+	"github.com/k1networth/servicedesk-lite/internal/shared/events"
 	"github.com/k1networth/servicedesk-lite/internal/shared/requestid"
 )
 
@@ -54,7 +55,7 @@ INSERT INTO outbox (aggregate, aggregate_id, event_type, payload)
 VALUES ($1, $2, $3, $4::jsonb);
 `
 	_, err = tx.ExecContext(ctx, qOutbox,
-		"ticket", out.ID, "ticket.created", payload,
+		"ticket", out.ID, events.EventTypeTicketCreated, payload,
 	)
 	if err != nil {
 		return Ticket{}, err

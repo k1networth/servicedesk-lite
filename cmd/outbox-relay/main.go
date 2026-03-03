@@ -79,20 +79,30 @@ func main() {
 	met := outbox.NewMetrics(reg)
 
 	// metrics server
-	go func() {
+	{
 		mux := http.NewServeMux()
 		mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ok"))
 		})
 		mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+			if err := pg.PingContext(r.Context()); err != nil {
+				http.Error(w, "db unavailable", http.StatusServiceUnavailable)
+				return
+			}
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ready"))
 		})
 		mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
-		log.Info("metrics_listen", slog.String("addr", metricsAddr))
-		_ = http.ListenAndServe(metricsAddr, mux)
-	}()
+		metricsSrv := &http.Server{Addr: metricsAddr, Handler: mux}
+		defer func() { _ = metricsSrv.Shutdown(context.Background()) }()
+		go func() {
+			log.Info("metrics_listen", slog.String("addr", metricsAddr))
+			if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Error("metrics_server_error", slog.String("err", err.Error()))
+			}
+		}()
+	}
 
 	log.Info("relay_start",
 		slog.Int("batch_size", batchSize),
@@ -192,13 +202,6 @@ func backoff(attempt int) time.Duration {
 		d = 60 * time.Second
 	}
 	return d
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func maybeDead(ctx context.Context, log *slog.Logger, store *outbox.Store, dlqProducer *kafkax.Producer, met *outbox.Metrics, e outbox.Event, env events.Envelope, maxAttempts int, errMsg string) bool {

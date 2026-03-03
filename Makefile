@@ -5,14 +5,14 @@ SHELL := /usr/bin/env bash
 BIN_DIR := $(CURDIR)/bin
 
 GOLANGCI_LINT_VERSION := v2.10.1
-XTOOLS_VERSION := v0.42.0
+XTOOLS_VERSION        := v0.42.0
 
 GOLANGCI_LINT := $(BIN_DIR)/golangci-lint
-GOIMPORTS := $(BIN_DIR)/goimports
+GOIMPORTS     := $(BIN_DIR)/goimports
 
 OPENAPI_TICKET := api/openapi/ticket-service.yaml
-DB_COMPOSE := infra/local/compose.yaml
-CORE_COMPOSE := infra/local/compose.core.yaml
+DB_COMPOSE     := infra/local/compose.yaml
+CORE_COMPOSE   := infra/local/compose.core.yaml
 
 ENV_FILE := $(CURDIR)/.env
 -include $(ENV_FILE)
@@ -25,11 +25,15 @@ GOFILES := $(shell find . -type f -name '*.go' \
 	-not -path './.git/*' 2>/dev/null)
 
 WORKDIR_MOUNT := -v $(CURDIR):/work -w /work
-DOCKER_RUN := docker run --rm $(WORKDIR_MOUNT)
+DOCKER_RUN    := docker run --rm $(WORKDIR_MOUNT)
 
 MIGRATE_IMAGE := migrate/migrate:v4.17.1
-MIGRATE_NET ?= host
-MIGRATE := $(DOCKER_RUN) --network $(MIGRATE_NET) $(MIGRATE_IMAGE)
+MIGRATE_NET  ?= host
+MIGRATE       := $(DOCKER_RUN) --network $(MIGRATE_NET) $(MIGRATE_IMAGE)
+
+# Shorthand compose commands — avoids repeating --env-file and -f everywhere.
+DC_DB   := docker compose --env-file $(ENV_FILE) -f $(DB_COMPOSE)
+DC_CORE := docker compose --env-file $(ENV_FILE) -f $(CORE_COMPOSE)
 
 GO_TEST_FLAGS ?= -count=1
 
@@ -37,11 +41,11 @@ GO_TEST_FLAGS ?= -count=1
 TOPIC ?= tickets.events
 GROUP ?= notification-service
 
-.PHONY: help versions tools fmt lint test check tidy download clean
+.PHONY: help versions tools fmt lint test test-race check tidy download build clean
 .PHONY: openapi-lint openapi-lint-ticket
 .PHONY: db-up db-down db-ps db-logs db-reset migrate-up migrate-down guard-%
 .PHONY: run-ticket run-relay run-notify e2e e2e-core
-.PHONY: up down ps logs
+.PHONY: up down ps logs restart reset
 .PHONY: diag diag-topics diag-peek diag-outbox diag-processed diag-groups diag-group
 
 # k8s/kind demo helpers
@@ -51,25 +55,68 @@ GROUP ?= notification-service
 .PHONY: k8s-obs-install k8s-obs-uninstall k8s-obs-apply k8s-obs-status k8s-obs-ui k8s-obs-grafana k8s-obs-prometheus k8s-obs-grafana-pf k8s-obs-prometheus-pf
 
 KIND_CLUSTER_NAME ?= servicedesk
-KIND_CONFIG ?= infra/k8s/kind/kind-config.yaml
+KIND_CONFIG       ?= infra/k8s/kind/kind-config.yaml
 
-HELM_RELEASE ?= servicedesk
-HELM_NAMESPACE ?= servicedesk
-IMAGE_TAG ?= dev
+HELM_RELEASE    ?= servicedesk
+HELM_NAMESPACE  ?= servicedesk
+IMAGE_TAG       ?= dev
 
-OBS_RELEASE ?= obs
-OBS_NAMESPACE ?= observability
-OBS_CHART ?= prometheus-community/kube-prometheus-stack
+OBS_RELEASE       ?= obs
+OBS_NAMESPACE     ?= observability
+OBS_CHART         ?= prometheus-community/kube-prometheus-stack
 OBS_CHART_VERSION ?= 82.3.0
-OBS_VALUES ?= infra/k8s/observability/kube-prometheus-stack.values.yaml
+OBS_VALUES        ?= infra/k8s/observability/kube-prometheus-stack.values.yaml
+
+# ─── Help ─────────────────────────────────────────────────────────────────────
 
 help: ## Show available commands
-	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_.-]+:.*##/ {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} \
+	/^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } \
+	/^[a-zA-Z0-9_.-]+:.*##/ { printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2 }' \
+	$(MAKEFILE_LIST)
+
+# ─── Go ───────────────────────────────────────────────────────────────────────
+
+##@ Go
 
 versions: ## Print pinned tool versions
 	@echo "golangci-lint: $(GOLANGCI_LINT_VERSION)"
 	@echo "x/tools (goimports): $(XTOOLS_VERSION)"
 	@echo "migrate: $(MIGRATE_IMAGE)"
+
+build: ## Compile all binaries to ./bin
+	@mkdir -p $(BIN_DIR)
+	@go build -o $(BIN_DIR)/ ./cmd/...
+
+fmt: tools ## Format code (goimports)
+	@if [[ -z "$(GOFILES)" ]]; then echo "No .go files found (skip)."; exit 0; fi
+	@chmod +x $(GOIMPORTS) 2>/dev/null || true
+	@$(GOIMPORTS) -w $(GOFILES)
+
+lint: tools ## Run linter
+	@chmod +x $(GOLANGCI_LINT) 2>/dev/null || true
+	@$(GOLANGCI_LINT) run -c .golangci.yml ./...
+
+vet: ## Run go vet
+	@go vet ./...
+
+test: ## Run tests
+	@go test ./... $(GO_TEST_FLAGS)
+
+test-race: ## Run tests with race detector
+	@go test -race ./... $(GO_TEST_FLAGS)
+
+check: fmt vet lint test ## Run fmt + vet + lint + test
+
+tidy: ## go mod tidy
+	@go mod tidy
+
+download: ## go mod download
+	@go mod download
+
+# ─── Tools ────────────────────────────────────────────────────────────────────
+
+##@ Tools
 
 tools: $(GOLANGCI_LINT) $(GOIMPORTS) ## Install dev tools into ./bin
 
@@ -83,59 +130,31 @@ $(GOIMPORTS):
 	@echo "Installing goimports (x/tools) $(XTOOLS_VERSION) -> $(GOIMPORTS)"
 	@GOBIN=$(BIN_DIR) go install golang.org/x/tools/cmd/goimports@$(XTOOLS_VERSION)
 
-fmt: tools ## Format code (goimports)
-	@if [[ -z "$(GOFILES)" ]]; then echo "No .go files found (skip)."; exit 0; fi
-	@chmod +x $(GOIMPORTS) 2>/dev/null || true
-	@$(GOIMPORTS) -w $(GOFILES)
-
-lint: tools ## Run linter
-	@chmod +x $(GOLANGCI_LINT) 2>/dev/null || true
-	@$(GOLANGCI_LINT) run -c .golangci.yml ./...
-
-test: ## Run tests
-	@go test ./... $(GO_TEST_FLAGS)
-
-check: fmt lint test ## Run fmt + lint + test
-
-tidy: ## go mod tidy
-	@go mod tidy
-
-download: ## go mod download
-	@go mod download
-
-clean: ## Remove local tools (./bin)
+clean: ## Remove local tools and binaries (./bin)
 	@rm -rf $(BIN_DIR)
 
 openapi-lint: openapi-lint-ticket ## Lint OpenAPI specs (docker)
 
-openapi-lint-ticket:
+openapi-lint-ticket: ## Lint ticket-service OpenAPI spec
 	@$(DOCKER_RUN) stoplight/spectral:6 lint $(OPENAPI_TICKET)
 
-db-up: ## Start local dependencies via docker compose
-	@docker compose --env-file $(ENV_FILE) -f $(DB_COMPOSE) up -d
+# ─── Local dependencies (postgres + kafka only) ───────────────────────────────
 
-db-down: ## Stop local dependencies (and remove volumes)
-	@docker compose --env-file $(ENV_FILE) -f $(DB_COMPOSE) down -v
+##@ Local dependencies
 
-db-ps: ## Show local dependencies status
-	@docker compose --env-file $(ENV_FILE) -f $(DB_COMPOSE) ps
+db-up: ## Start postgres + kafka via docker compose
+	@$(DC_DB) up -d
 
-db-logs: ## Follow docker compose logs
-	@docker compose --env-file $(ENV_FILE) -f $(DB_COMPOSE) logs -f --tail=200
+db-down: ## Stop postgres + kafka (and remove volumes)
+	@$(DC_DB) down -v
 
-db-reset: db-down db-up ## Recreate local dependencies from scratch (with fresh volumes)
+db-ps: ## Show postgres + kafka status
+	@$(DC_DB) ps
 
-up: ## Start full local stack (postgres+kafka+services) via docker compose
-	@docker compose --env-file $(ENV_FILE) -f $(CORE_COMPOSE) up -d --build
+db-logs: ## Follow postgres + kafka logs
+	@$(DC_DB) logs -f --tail=200
 
-down: ## Stop full local stack (and remove volumes)
-	@docker compose --env-file $(ENV_FILE) -f $(CORE_COMPOSE) down -v
-
-ps: ## Show full local stack status
-	@docker compose --env-file $(ENV_FILE) -f $(CORE_COMPOSE) ps
-
-logs: ## Follow full local stack logs
-	@docker compose --env-file $(ENV_FILE) -f $(CORE_COMPOSE) logs -f --tail=200
+db-reset: db-down db-up ## Recreate postgres + kafka from scratch (fresh volumes)
 
 guard-%:
 	@if [[ -z "$($*)" ]]; then echo "ERROR: $* is empty"; exit 1; fi
@@ -145,6 +164,32 @@ migrate-up: guard-DATABASE_URL ## Run DB migrations up (docker)
 
 migrate-down: guard-DATABASE_URL ## Rollback last migration (docker)
 	@$(MIGRATE) -path migrations -database "$(DATABASE_URL)" down 1
+
+# ─── Full local stack (docker compose core) ───────────────────────────────────
+
+##@ Full stack (compose)
+
+up: ## Start full stack (postgres+kafka+services) via docker compose
+	@$(DC_CORE) up -d --build
+
+down: ## Stop full stack (and remove volumes)
+	@$(DC_CORE) down -v
+
+ps: ## Show full stack status
+	@$(DC_CORE) ps
+
+logs: ## Follow full stack logs
+	@$(DC_CORE) logs -f --tail=200
+
+restart: ## Restart full stack (down + up)
+	@$(DC_CORE) down -v
+	@$(DC_CORE) up -d --build
+
+reset: down db-up migrate-up ## Recreate stack and re-run migrations (down→deps up→migrate)
+
+# ─── Run services locally ─────────────────────────────────────────────────────
+
+##@ Run locally
 
 run-ticket: ## Run ticket-service (Ctrl+C is OK)
 	@go run ./cmd/ticket-service; code=$$?; test $$code -eq 0 -o $$code -eq 130
@@ -158,8 +203,12 @@ run-notify: ## Run notification-service (Ctrl+C is OK)
 e2e: ## Run local end-to-end check (scripts/e2e_local.sh)
 	@./scripts/e2e_local.sh
 
-e2e-core: ## Run end-to-end check against docker compose core stack (no go run)
+e2e-core: ## Run end-to-end check against docker compose core stack
 	@./scripts/e2e_compose.sh
+
+# ─── Diagnostics ──────────────────────────────────────────────────────────────
+
+##@ Diagnostics
 
 diag: ## Show diag script help
 	@./scripts/diag.sh
@@ -182,11 +231,19 @@ diag-groups: ## List consumer groups
 diag-group: ## Describe consumer group (GROUP=notification-service)
 	@./scripts/diag.sh group $(GROUP)
 
+# ─── Docker images ────────────────────────────────────────────────────────────
+
+##@ Docker images
+
 docker-build: ## Build local images for kind/helm demo
 	@docker build -t servicedesk/ticket-service:$(IMAGE_TAG) -f cmd/ticket-service/Dockerfile .
 	@docker build -t servicedesk/outbox-relay:$(IMAGE_TAG) -f cmd/outbox-relay/Dockerfile .
 	@docker build -t servicedesk/notification-service:$(IMAGE_TAG) -f cmd/notification-service/Dockerfile .
 	@docker build -t servicedesk/migrate:$(IMAGE_TAG) -f build/migrate/Dockerfile .
+
+# ─── kind / Kubernetes ────────────────────────────────────────────────────────
+
+##@ kind / Kubernetes
 
 kind-up: ## Create kind cluster (requires kind)
 	@CLUSTER_NAME=$(KIND_CLUSTER_NAME) CONFIG=$(KIND_CONFIG) bash ./scripts/kind.sh up
@@ -217,7 +274,7 @@ k8s-addons: ## Install ingress-nginx + metrics-server (internet required)
 	@kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeout=300s
 	@kubectl -n kube-system wait --for=condition=Ready pod -l k8s-app=metrics-server --timeout=300s
 
-kind-demo: docker-build kind-up kind-load k8s-addons k8s-install ## One-command kind demo (build->cluster->addons->helm)
+kind-demo: docker-build kind-up kind-load k8s-addons k8s-install ## One-command kind demo (build→cluster→addons→helm)
 
 k8s-install: ## Install/upgrade Helm release into kind (requires helm+kubectl)
 	@helm upgrade --install $(HELM_RELEASE) infra/k8s/helm/servicedesk-lite \
@@ -241,9 +298,13 @@ k8s-urls: ## Print URLs for kind-in-VM demo (ingress on :8080)
 	@echo "Note: kind maps ingress 80->8080 via infra/k8s/kind/kind-config.yaml."
 	@echo "      If you're running inside VirtualBox NAT, forward host:8080 -> guest:8080."
 
-k8s-port-forward: ## Port-forward ticket-service to localhost:18080 (avoid clash with kind ingress on :8080)
+k8s-port-forward: ## Port-forward ticket-service to localhost:18080
 	@echo "Port-forwarding ticket-service -> http://localhost:18080 (Ctrl+C to stop)";
 	@kubectl -n $(HELM_NAMESPACE) port-forward --address 0.0.0.0 svc/ticket-service 18080:8080
+
+# ─── Observability (Prometheus + Grafana) ─────────────────────────────────────
+
+##@ Observability
 
 k8s-obs-install: ## Install Prometheus+Grafana (kube-prometheus-stack)
 	@helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
@@ -253,6 +314,9 @@ k8s-obs-install: ## Install Prometheus+Grafana (kube-prometheus-stack)
 		-f $(OBS_VALUES) \
 		--version $(OBS_CHART_VERSION) \
 		--wait --timeout 10m
+
+k8s-obs-uninstall: ## Uninstall Prometheus+Grafana
+	@helm uninstall $(OBS_RELEASE) -n $(OBS_NAMESPACE) || true
 
 k8s-obs-apply: ## Apply ServiceMonitors + Grafana dashboard
 	@kubectl -n $(HELM_NAMESPACE) apply -f infra/k8s/observability/servicemonitors.yaml
@@ -265,10 +329,10 @@ k8s-obs-apply: ## Apply ServiceMonitors + Grafana dashboard
 k8s-obs-status: ## kubectl get all in observability namespace
 	@kubectl -n $(OBS_NAMESPACE) get all
 
-k8s-obs-ui: ## Print Grafana/Prometheus URLs via ingress (no port-forward)
+k8s-obs-ui: ## Print Grafana/Prometheus URLs via ingress
 	@echo "Grafana:    http://localhost:8080/grafana (admin/admin)"
 	@echo "Prometheus: http://localhost:8080/prometheus"
-	@echo "(Use 'make k8s-obs-grafana-pf' or 'make k8s-obs-prometheus-pf' only if you really need port-forward.)"
+	@echo "(Use 'make k8s-obs-grafana-pf' or 'make k8s-obs-prometheus-pf' for direct port-forward.)"
 
 k8s-obs-grafana: ## Show Grafana URL via ingress (admin/admin)
 	@echo "Grafana: http://localhost:8080/grafana (admin/admin)"
@@ -285,6 +349,3 @@ k8s-obs-prometheus-pf: ## Port-forward Prometheus UI to localhost:9090
 	@svc=$$(kubectl -n $(OBS_NAMESPACE) get svc -l app.kubernetes.io/instance=$(OBS_RELEASE) -o name | grep prometheus | head -n 1 | cut -d/ -f2); \
 	 echo "Prometheus PF: http://localhost:9090"; \
 	 kubectl -n $(OBS_NAMESPACE) port-forward --address 0.0.0.0 svc/$$svc 9090:9090
-
-k8s-obs-uninstall: ## Uninstall Prometheus+Grafana
-	@helm uninstall $(OBS_RELEASE) -n $(OBS_NAMESPACE) || true

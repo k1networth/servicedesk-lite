@@ -40,6 +40,13 @@ spec:
         - name: postgres
           image: {{ .Values.postgres.image | quote }}
           imagePullPolicy: IfNotPresent
+          args:
+            - "-c"
+            - "max_connections={{ .Values.postgres.maxConnections }}"
+            - "-c"
+            - "shared_buffers={{ .Values.postgres.sharedBuffers }}"
+            - "-c"
+            - "synchronous_commit={{ .Values.postgres.synchronousCommit }}"
           ports:
             - containerPort: 5432
               name: pg

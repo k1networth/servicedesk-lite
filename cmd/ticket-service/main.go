@@ -8,6 +8,7 @@ import (
 
 	"github.com/k1networth/servicedesk-lite/internal/shared/config"
 	"github.com/k1networth/servicedesk-lite/internal/shared/db"
+	"github.com/k1networth/servicedesk-lite/internal/shared/env"
 	"github.com/k1networth/servicedesk-lite/internal/shared/httpx"
 	"github.com/k1networth/servicedesk-lite/internal/shared/logger"
 	"github.com/k1networth/servicedesk-lite/internal/ticket"
@@ -22,8 +23,13 @@ func main() {
 	ctx := context.Background()
 
 	var store ticket.Store
+	var readyz func(context.Context) error
 	if cfg.DatabaseURL != "" {
-		pg, err := db.OpenPostgres(ctx, db.PostgresConfig{DatabaseURL: cfg.DatabaseURL})
+		pg, err := db.OpenPostgres(ctx, db.PostgresConfig{
+			DatabaseURL:  cfg.DatabaseURL,
+			MaxOpenConns: env.Int("DB_MAX_OPEN_CONNS", 25),
+			MaxIdleConns: env.Int("DB_MAX_IDLE_CONNS", 25),
+		})
 		if err != nil {
 			log.Error("db_open_failed", slog.String("err", err.Error()))
 			return
@@ -35,6 +41,7 @@ func main() {
 		}()
 
 		store = ticket.NewPostgresStore(pg)
+		readyz = func(ctx context.Context) error { return pg.PingContext(ctx) }
 		log.Info("storage", slog.String("type", "postgres"))
 	} else {
 		store = ticket.NewInMemoryStore()
@@ -46,7 +53,7 @@ func main() {
 		Store: store,
 	}
 
-	handler := httpx.NewRouter(log, ticketH)
+	handler := httpx.NewRouter(log, ticketH, readyz)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
