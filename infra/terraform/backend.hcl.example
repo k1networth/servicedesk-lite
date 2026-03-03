@@ -1,0 +1,14 @@
+# backend.hcl — Yandex Cloud Object Storage credentials for Terraform state.
+#
+# NEVER commit the real backend.hcl — it contains secrets.
+# Copy this file: cp backend.hcl.example backend.hcl
+# Then fill in your Yandex Cloud static access key.
+#
+# How to create a static access key in Yandex Cloud:
+#   yc iam access-key create --service-account-name <sa-name>
+#
+# Usage:
+#   terraform init -backend-config=backend.hcl
+
+access_key = "YOUR_YC_STATIC_KEY_ID"
+secret_key = "YOUR_YC_STATIC_KEY_SECRET"
