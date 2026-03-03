@@ -1,0 +1,125 @@
+---
+# Role: k8s-node
+# Installs kubeadm, kubelet, kubectl and bootstraps the cluster:
+#   - on control-plane: kubeadm init
+#   - on workers:       kubeadm join
+
+# ── Install kubeadm, kubelet, kubectl ─────────────────────────────────────────
+
+- name: Add Kubernetes apt repository key
+  get_url:
+    url: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/Release.key"
+    dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
+    mode: "0644"
+  when: ansible_os_family == "Debian"
+
+- name: Add Kubernetes apt repository
+  apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc] https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/ /"
+    state: present
+    filename: kubernetes
+  when: ansible_os_family == "Debian"
+
+- name: Install kubeadm, kubelet, kubectl
+  apt:
+    name:
+      - "kubeadm"
+      - "kubelet"
+      - "kubectl"
+    state: present
+    update_cache: true
+  when: ansible_os_family == "Debian"
+
+- name: Hold kubeadm, kubelet, kubectl at current version
+  dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - kubeadm
+    - kubelet
+    - kubectl
+  when: ansible_os_family == "Debian"
+
+- name: Enable and start kubelet
+  systemd:
+    name: kubelet
+    enabled: true
+    state: started
+
+# ── Control-plane: kubeadm init ───────────────────────────────────────────────
+
+- name: Check if cluster is already initialized
+  stat:
+    path: /etc/kubernetes/admin.conf
+  register: kubeconfig_stat
+  when: inventory_hostname in groups['control_plane']
+
+- name: Initialize Kubernetes control-plane with kubeadm
+  command: >
+    kubeadm init
+    --kubernetes-version={{ kubernetes_version }}
+    --pod-network-cidr={{ k8s_pod_cidr }}
+    --service-cidr={{ k8s_service_cidr }}
+    --cri-socket={{ containerd_socket }}
+    --upload-certs
+  when:
+    - inventory_hostname in groups['control_plane']
+    - not kubeconfig_stat.stat.exists
+  register: kubeadm_init
+
+- name: Create .kube directory for current user
+  file:
+    path: "{{ ansible_env.HOME }}/.kube"
+    state: directory
+    mode: "0755"
+  when: inventory_hostname in groups['control_plane']
+
+- name: Copy admin.conf to user kubeconfig
+  copy:
+    src: /etc/kubernetes/admin.conf
+    dest: "{{ ansible_env.HOME }}/.kube/config"
+    remote_src: true
+    owner: "{{ ansible_user_id }}"
+    mode: "0600"
+  when: inventory_hostname in groups['control_plane']
+
+# ── Install CNI (Calico) on control-plane ─────────────────────────────────────
+
+- name: Install Calico CNI
+  command: >
+    kubectl apply -f
+    https://raw.githubusercontent.com/projectcalico/calico/v{{ calico_version }}/manifests/calico.yaml
+  when:
+    - inventory_hostname in groups['control_plane']
+    - not kubeconfig_stat.stat.exists
+  environment:
+    KUBECONFIG: "{{ ansible_env.HOME }}/.kube/config"
+
+# ── Generate join command on control-plane ────────────────────────────────────
+
+- name: Generate kubeadm join command for workers
+  command: kubeadm token create --print-join-command
+  register: join_command
+  when: inventory_hostname in groups['control_plane']
+  changed_when: false
+
+- name: Store join command as fact
+  set_fact:
+    kubeadm_join_command: "{{ join_command.stdout }}"
+  when: inventory_hostname in groups['control_plane']
+
+# ── Workers: kubeadm join ─────────────────────────────────────────────────────
+
+- name: Check if worker is already joined
+  stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: kubelet_conf_stat
+  when: inventory_hostname in groups['workers']
+
+- name: Join worker node to the cluster
+  command: >
+    {{ hostvars[groups['control_plane'][0]]['kubeadm_join_command'] }}
+    --cri-socket={{ containerd_socket }}
+  when:
+    - inventory_hostname in groups['workers']
+    - not kubelet_conf_stat.stat.exists

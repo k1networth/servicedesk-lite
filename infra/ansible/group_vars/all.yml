@@ -1,0 +1,28 @@
+---
+# Versions — update here to upgrade the entire cluster
+kubernetes_version: "1.30"
+containerd_version: "1.7.18"
+runc_version: "1.1.13"
+cni_plugins_version: "1.5.1"
+
+# Kubernetes network settings
+k8s_pod_cidr: "192.168.0.0/16"
+k8s_service_cidr: "10.96.0.0/12"
+
+# CNI plugin (calico, flannel, etc.)
+k8s_cni: "calico"
+calico_version: "3.28.0"
+
+# Container runtime socket path
+containerd_socket: "/run/containerd/containerd.sock"
+
+# Kernel modules required by Kubernetes
+k8s_kernel_modules:
+  - overlay
+  - br_netfilter
+
+# sysctl settings required by Kubernetes
+k8s_sysctl_params:
+  net.bridge.bridge-nf-call-iptables: 1
+  net.bridge.bridge-nf-call-ip6tables: 1
+  net.ipv4.ip_forward: 1

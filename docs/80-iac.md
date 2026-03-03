@@ -1,9 +1,9 @@
-# IaC — облачная инфраструктура (Yandex Cloud blueprint)
+# IaC — облачная инфраструктура (Yandex Cloud)
 
 Этот документ описывает production-топологию на базе Yandex Cloud.
-Terraform-код находится в `infra/terraform/` (структура модулей).
+Terraform-код находится в `infra/terraform/`, Ansible — в `infra/ansible/`.
 
-> **Статус:** production blueprint. В демо-среде (kind) зависимости запущены как StatefulSet внутри кластера. Terraform описывает целевую архитектуру для production-деплоя.
+> **Статус:** реализовано. В демо-среде (kind) зависимости запущены как StatefulSet внутри кластера. Terraform + Ansible описывают целевую архитектуру для production-деплоя.
 
 ---
 
@@ -48,14 +48,24 @@ Yandex Cloud
 
 ```
 infra/terraform/
-├── main.tf          # provider, backend (S3-compatible Object Storage)
-├── variables.tf
-├── outputs.tf
+├── main.tf               # provider + local backend
+├── variables.tf          # все входные параметры
+├── outputs.tf            # cluster endpoint, registry ID, postgres FQDN
+├── backend.hcl.example   # шаблон для S3 backend (production)
 └── modules/
-    ├── network/     # VPC, subnets, security groups
-    ├── k8s/         # Managed K8s cluster + node group
-    ├── postgres/    # Managed PostgreSQL cluster
-    └── registry/    # Container Registry
+    ├── network/          # VPC, subnets, security groups, NAT gateway
+    ├── k8s/              # Managed K8s cluster + node group + IAM SA
+    ├── postgres/         # Managed PostgreSQL 16, replica, pgBouncer
+    └── registry/         # Container Registry + IAM binding
+```
+
+По умолчанию state хранится локально (`terraform.tfstate`).
+Для production — переключиться на S3 backend (Yandex Object Storage), пример в `backend.hcl.example`:
+
+```bash
+cp infra/terraform/backend.hcl.example infra/terraform/backend.hcl
+# заполнить access_key / secret_key
+terraform init -backend-config=backend.hcl
 ```
 
 ### Модуль network
@@ -127,9 +137,32 @@ helm upgrade --install servicedesk-lite \
 
 ## Ansible
 
-Для self-managed кластера (альтернатива Managed K8s) потребовалось бы:
-- Роль `base`: sysctl, ulimits, отключение swap
-- Роль `container-runtime`: установка containerd
-- Роль `k8s-node`: kubeadm bootstrap
+Playbook для self-managed кластера — альтернатива Managed K8s (например, bare-metal или VMs без managed-сервиса).
+Код находится в `infra/ansible/`.
 
-В данном проекте используется Managed K8s (Yandex Cloud берёт на себя bootstrapping нодов), поэтому Ansible не требуется.
+```
+infra/ansible/
+├── inventory/
+│   └── hosts.yml           # шаблон инвентаря (control-plane + workers)
+├── group_vars/
+│   └── all.yml             # версии K8s, containerd, CNI; pod/service CIDR
+├── roles/
+│   ├── base/               # отключение swap, kernel modules, sysctl, ulimits
+│   ├── container-runtime/  # containerd + runc + CNI plugins
+│   └── k8s-node/           # kubeadm init (control-plane) + join (workers)
+└── site.yml                # главный playbook
+```
+
+### Запуск
+
+```bash
+# Заполнить inventory/hosts.yml реальными IP-адресами нод
+ansible-playbook -i infra/ansible/inventory/hosts.yml infra/ansible/site.yml
+```
+
+Playbook последовательно применяет три роли на все ноды:
+1. `base` — ОС-prerequisites
+2. `container-runtime` — containerd
+3. `k8s-node` — kubeadm bootstrap: init на control-plane, join на workers
+
+В данном проекте основной путь деплоя — Managed K8s (Yandex Cloud), поэтому Ansible описывает on-premise альтернативу.

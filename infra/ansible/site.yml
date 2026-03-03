@@ -1,0 +1,18 @@
+---
+# Main playbook: prepare all nodes, then bootstrap the Kubernetes cluster.
+#
+# Execution order:
+#   1. base           — OS-level prerequisites (sysctl, swap, ulimits)
+#   2. container-runtime — containerd + runc + CNI plugins
+#   3. k8s-node       — kubeadm install, init on control-plane, join on workers
+
+- name: Prepare all nodes
+  hosts: k8s_nodes
+  roles:
+    - base
+    - container-runtime
+
+- name: Bootstrap Kubernetes cluster
+  hosts: k8s_nodes
+  roles:
+    - k8s-node
