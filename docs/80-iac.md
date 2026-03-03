@@ -1,23 +1,135 @@
-# Terraform + Ansible (план)
+# IaC — облачная инфраструктура (Yandex Cloud blueprint)
 
-Для диплома IaC можно сделать в минимальном виде или описать как "production blueprint".
+Этот документ описывает production-топологию на базе Yandex Cloud.
+Terraform-код находится в `infra/terraform/` (структура модулей).
 
-## Terraform
-Планируемая структура:
-- modules: network, k8s cluster (managed/self-managed), registry (опц), observability (опц)
-- env: dev (обязательно), stage (опц)
+> **Статус:** production blueprint. В демо-среде (kind) зависимости запущены как StatefulSet внутри кластера. Terraform описывает целевую архитектуру для production-деплоя.
+
+---
+
+## Целевая топология
+
+```
+Yandex Cloud
+├── VPC
+│   ├── subnet-a (ru-central1-a)
+│   ├── subnet-b (ru-central1-b)
+│   └── subnet-c (ru-central1-c)
+│
+├── Managed Service for Kubernetes
+│   ├── Control Plane (managed, multi-master)
+│   └── Node Group (2–6 нодов, auto-scaling)
+│       ├── ticket-service  (Deployment, HPA)
+│       ├── outbox-relay    (Deployment)
+│       ├── notification-service (Deployment)
+│       └── kube-prometheus-stack (Observability)
+│
+├── Managed Service for PostgreSQL
+│   ├── Primary (ru-central1-a)
+│   └── Replica (ru-central1-b)  ← failover
+│
+├── Container Registry
+│   └── servicedesk/* (образы сервисов)
+│
+└── Application Load Balancer
+    └── → Ingress Controller (ingress-nginx в кластере)
+```
+
+## Почему Managed-сервисы вместо StatefulSet
+
+| Компонент | StatefulSet (demo) | Managed (production) |
+|---|---|---|
+| Postgres | ручное управление PVC, backups | автобэкапы, failover, мониторинг |
+| Отказоустойчивость | при сбое ноды данные могут быть недоступны | multi-AZ replica, автопереключение |
+| Обслуживание | ручные патчи, вакуум | автоматические minor updates |
+| Масштабирование | ручное изменение ресурсов пода | вертикальное через Yandex Cloud UI/API |
+
+## Структура Terraform
+
+```
+infra/terraform/
+├── main.tf          # provider, backend (S3-compatible Object Storage)
+├── variables.tf
+├── outputs.tf
+└── modules/
+    ├── network/     # VPC, subnets, security groups
+    ├── k8s/         # Managed K8s cluster + node group
+    ├── postgres/    # Managed PostgreSQL cluster
+    └── registry/    # Container Registry
+```
+
+### Модуль network
+
+- VPC с тремя подсетями в разных зонах доступности
+- Security group: разрешает трафик только между компонентами (k8s → postgres, egress)
+- NAT Gateway для outbound трафика нодов
+
+### Модуль k8s
+
+- `yandex_kubernetes_cluster` — managed control plane
+- `yandex_kubernetes_node_group` — auto-scaling group (min 2, max 6)
+- Service Account с ролями для Container Registry и Load Balancer
+
+### Модуль postgres
+
+- `yandex_mdb_postgresql_cluster` — managed Postgres 16
+- Replica в другой зоне (ru-central1-b)
+- Автобэкапы: retention 7 дней
+- Connection pooler (pgBouncer) — встроенный в managed сервис
+
+### Модуль registry
+
+- `yandex_container_registry` — приватный реестр образов
+- IAM-роль для pull из k8s нодов
+
+## Деплой приложения в production
+
+После `terraform apply` — деплой через тот же Helm chart:
+
+```bash
+# Получить kubeconfig
+yc managed-kubernetes cluster get-credentials <cluster-name> --external
+
+# Деплой
+helm upgrade --install servicedesk-lite \
+  infra/k8s/helm/servicedesk-lite \
+  -f infra/k8s/helm/servicedesk-lite/values-prod.yaml \
+  --set postgres.password=$POSTGRES_PASSWORD
+```
+
+`values-prod.yaml` переопределяет:
+- `postgres.image` → не используется (Managed Postgres через DATABASE_URL)
+- `kafka.image` → не используется (Managed Kafka через KAFKA_BROKERS)
+- `images.*.repository` → Container Registry endpoint
+
+## HA-характеристики production-топологии
+
+| Сценарий | Поведение |
+|---|---|
+| Падение пода ticket-service | HPA + readinessProbe: трафик уходит на другие реплики |
+| Rolling update | PDB + maxUnavailable=0: нулевой даунтайм |
+| Падение k8s ноды | Kubernetes переносит поды на другой нод автоматически |
+| Падение primary Postgres | Managed Service автоматически переключает на реплику |
+| Перегрузка ticket-service | HPA масштабирует до 3 (или больше) реплик по CPU |
+
+## Оценка стоимости (Yandex Cloud, ru-central1)
+
+| Компонент | Конфигурация | Стоимость/мес (ориентир) |
+|---|---|---|
+| Managed K8s Control Plane | — | ~1 500 руб |
+| Node Group (2 × 2 vCPU / 8 GB) | standard-v3 | ~6 000 руб |
+| Managed PostgreSQL (2 vCPU / 8 GB) | с репликой | ~5 000 руб |
+| Container Registry | 10 GB | ~100 руб |
+| Application Load Balancer | — | ~500 руб |
+| **Итого** | | **~13 000 руб/мес** |
+
+> Для диплома и краткосрочного теста достаточно минимальной конфигурации (~5 000 руб/мес или ~150 руб/день при почасовой оплате).
 
 ## Ansible
-Планируемые роли:
-- base hardening (sysctl/limits)
-- container runtime
-- k8s node bootstrap (если self-managed)
-- monitoring agents (опц)
 
-## HA design points (что описать)
-- multi-AZ node groups
-- spread across nodes/az
-- backups (Postgres) + retention
-- DR notes (опц)
+Для self-managed кластера (альтернатива Managed K8s) потребовалось бы:
+- Роль `base`: sysctl, ulimits, отключение swap
+- Роль `container-runtime`: установка containerd
+- Роль `k8s-node`: kubeadm bootstrap
 
-Подробный чек-лист задач — docs/TODO.md.
+В данном проекте используется Managed K8s (Yandex Cloud берёт на себя bootstrapping нодов), поэтому Ansible не требуется.

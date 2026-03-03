@@ -2,31 +2,34 @@
 
 Этот файл — единственное место, где допускаются TODO. В остальных документах должны быть либо готовые инструкции, либо секции "План/Следующая итерация".
 
-## Iteration 3 — Kubernetes deploy
-- [ ] Helm chart или Kustomize (выбрать один подход и зафиксировать)
-- [ ] Deployments/Services для ticket-service, outbox-relay, notification-service
-- [ ] ConfigMap/Secret для DB/Kafka
-- [ ] readiness/liveness probes
-- [ ] requests/limits
-- [ ] Ingress для ticket-service
-- [ ] HPA (минимум для ticket-service)
-- [ ] PDB + topology spread/anti-affinity (минимально)
-- [ ] Скрипт: kind/minikube → одна команда → сервис доступен
+## Iteration 3 — Kubernetes deploy ✅ Выполнено
 
-## Iteration 4 — Observability
-- [ ] Prometheus scrape всех /metrics
-- [ ] Grafana dashboard (RPS/latency/errors, outbox dead/failed, notify errors/processed)
+- [x] Helm chart (выбран, реализован)
+- [x] Deployments/Services для ticket-service, outbox-relay, notification-service
+- [x] ConfigMap/Secret для DB/Kafka
+- [x] readiness/liveness probes (с реальным pg.PingContext)
+- [x] requests/limits для всех сервисов
+- [x] Ingress для ticket-service (и Grafana/Prometheus)
+- [x] HPA для ticket-service (min 1, max 3, CPU 70%)
+- [x] PDB (minAvailable: 1)
+- [x] `make k8s-up` — одна команда → сервис доступен
+
+## Iteration 4 — Observability ✅ Выполнено
+
+- [x] Prometheus scrape всех /metrics (ServiceMonitors)
+- [x] Grafana dashboard (RPS, outbox lag, notify processed)
 - [ ] (опц) Loki + promtail
 - [ ] (stretch) OpenTelemetry traces
 
 ## Iteration 5 — CI/CD
-- [ ] CI: make check + build images
-- [ ] Security: govulncheck (+ опц trivy/grype)
-- [ ] CD минимум: deploy в kind в CI
+
+- [x] CI: lint + test + build + images (GitHub Actions, `.github/workflows/ci.yaml`)
+- [x] Security: govulncheck
+- [ ] CD минимум: deploy в kind в CI (smoke test)
 - [ ] (опц) GitOps (ArgoCD/Flux)
 
 ## Iteration 6 — Дипломные артефакты
-- [ ] C4: Context/Container/Component
+
+- [ ] C4: Context/Container/Component диаграммы
 - [ ] Sequence diagram: create ticket → outbox → relay → kafka → notify
-- [ ] Таблица NFR (надёжность, идемпотентность, масштабирование, наблюдаемость)
 - [ ] Инструкция воспроизведения демо: local compose + k8s + CI

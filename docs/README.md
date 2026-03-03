@@ -17,7 +17,8 @@
 ### Эксплуатация
 - Observability (metrics/logs/traces): `60-observability.md`
 - Kubernetes (Helm/HPA/PDB/rollout/HA): `70-k8s.md`
-- IaC (Terraform/Ansible): `80-iac.md`
+- IaC / Облако (Terraform, Yandex Cloud blueprint): `80-iac.md`
+- CI/CD (GitHub Actions: lint/test/build/deploy): `85-cicd.md`
 - Capacity planning & tuning: `90-capacity.md`
 
 ## Документация по сервисам
