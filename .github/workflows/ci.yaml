@@ -100,7 +100,7 @@ jobs:
           - service: notification-service
             dockerfile: cmd/notification-service/Dockerfile
           - service: migrate
-            dockerfile: build/migrate/Dockerfile
+            dockerfile: infra/docker/migrate.Dockerfile
     steps:
       - uses: actions/checkout@v4
 
