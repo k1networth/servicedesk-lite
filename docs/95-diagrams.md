@@ -1,4 +1,4 @@
-# Диаграммы
+<img width="1448" height="929" alt="ChatGPT Image 7 мая 2026 г , 01_17_58" src="https://github.com/user-attachments/assets/5e468c47-cc5e-4732-bd7d-49f93407f828" /># Диаграммы
 
 Все диаграммы написаны в формате [Mermaid](https://mermaid.js.org/) — рендерятся в GitHub, VS Code (плагин Markdown Preview Mermaid) и draw.io (import).
 
@@ -33,42 +33,8 @@ C4Context
 
 Показывает отдельные процессы/сервисы внутри системы и их взаимодействие.
 
-```mermaid
-C4Container
-  title Container Diagram: servicedesk-lite
+<img width="1448" height="929" alt="Container" src="https://github.com/user-attachments/assets/98ffaf03-2d1b-4199-94c0-185f6c5b44e4" />
 
-  Person(user, "Пользователь")
-  Person(ops, "Оператор")
-
-  System_Boundary(sd, "servicedesk-lite (Kubernetes namespace: servicedesk)") {
-    Container(ingress, "Ingress", "ingress-nginx", "Маршрутизация входящего HTTP трафика")
-
-    Container(ts, "ticket-service", "Go 1.24, HTTP", "REST API: создание и получение тикетов.\nПишет в tickets + outbox в одной транзакции.")
-    Container(relay, "outbox-relay", "Go 1.24, worker", "Polling таблицы outbox.\nПубликует события в Kafka.\nFOR UPDATE SKIP LOCKED.")
-    Container(notify, "notification-service", "Go 1.24, consumer", "Kafka consumer.\nИдемпотентная обработка через processed_events.")
-
-    ContainerDb(pg, "PostgreSQL 16", "PostgreSQL", "Таблицы: tickets, outbox, processed_events")
-    Container(kafka, "Apache Kafka 3.7", "KRaft mode", "Топик tickets.events.\nAt-least-once доставка.")
-
-    Container(prometheus, "Prometheus", "kube-prometheus-stack", "Сбор метрик через ServiceMonitor CRD")
-    Container(grafana, "Grafana", "kube-prometheus-stack", "Дашборды: RPS, latency, outbox lag")
-  }
-
-  Rel(user, ingress, "HTTP :80", "TCP")
-  Rel(ingress, ts, "HTTP", "ClusterIP")
-  Rel(ops, grafana, "HTTP /grafana", "TCP")
-
-  Rel(ts, pg, "INSERT tickets + outbox", "TCP 5432")
-  Rel(relay, pg, "SELECT FOR UPDATE SKIP LOCKED\nUPDATE status", "TCP 5432")
-  Rel(relay, kafka, "Produce: tickets.events", "TCP 9092")
-  Rel(notify, kafka, "Consume: tickets.events", "TCP 9092")
-  Rel(notify, pg, "INSERT processed_events", "TCP 5432")
-
-  Rel(prometheus, ts, "scrape /metrics", "HTTP 8080")
-  Rel(prometheus, relay, "scrape /metrics", "HTTP 9090")
-  Rel(prometheus, notify, "scrape /metrics", "HTTP 9091")
-  Rel(grafana, prometheus, "PromQL", "HTTP")
-```
 
 ---
 
