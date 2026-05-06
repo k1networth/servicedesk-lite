@@ -1,4 +1,4 @@
-<img width="1448" height="929" alt="ChatGPT Image 7 мая 2026 г , 01_17_58" src="https://github.com/user-attachments/assets/5e468c47-cc5e-4732-bd7d-49f93407f828" /># Диаграммы
+# Диаграммы
 
 Все диаграммы написаны в формате [Mermaid](https://mermaid.js.org/) — рендерятся в GitHub, VS Code (плагин Markdown Preview Mermaid) и draw.io (import).
 
