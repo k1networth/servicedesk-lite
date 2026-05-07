@@ -239,7 +239,7 @@ docker-build: ## Build local images for kind/helm demo
 	@docker build -t servicedesk/ticket-service:$(IMAGE_TAG) -f cmd/ticket-service/Dockerfile .
 	@docker build -t servicedesk/outbox-relay:$(IMAGE_TAG) -f cmd/outbox-relay/Dockerfile .
 	@docker build -t servicedesk/notification-service:$(IMAGE_TAG) -f cmd/notification-service/Dockerfile .
-	@docker build -t servicedesk/migrate:$(IMAGE_TAG) -f build/migrate/Dockerfile .
+	@docker build -t servicedesk/migrate:$(IMAGE_TAG) -f infra/docker/migrate.Dockerfile .
 
 # ─── kind / Kubernetes ────────────────────────────────────────────────────────
 
